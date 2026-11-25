@@ -19,7 +19,7 @@
   "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "rezanci-archive" }],
   // State store: sessions, enrollments, image records, event log.
   "d1_databases": [
-    { "binding": "DB", "database_name": "rezanci", "database_id": "a48a3ac7-a8e0-4177-ae35-4fcec42a2f5f" }
+    { "binding": "DB", "database_name": "rezanci", "database_id": "a48a3ac7-a8e0-4177-ae35-4fcec42a2f5f", "migrations_dir": "migrations" }
   ],
   "observability": { "enabled": true }
 }
