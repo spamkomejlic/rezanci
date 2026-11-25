@@ -1,0 +1,12 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.pem
+
+# Working documents and tool files. Not part of the app.
+SPEC.md
+research/
+CLAUDE.md
+AGENTS.md
+HANDOFF.md
+.claude/

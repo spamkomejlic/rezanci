@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Camera probe</title>
+<link rel="stylesheet" href="/probe.css">
+</head>
+<body>
+<h1>Camera probe</h1>
+<p>Reports the pixel size of a photo from each capture path. No photo leaves this phone.</p>
+
+<h2>Test 1: system camera</h2>
+<p>If the camera screen has a 50 MP or high-resolution mode, select it.</p>
+<label>Take photo <input id="t1" type="file" accept="image/*" capture="environment"></label>
+
+<h2>Test 2: photos from gallery</h2>
+<p>Open the phone camera app. Select 50 MP mode one time. Take 3 photos in sequence. Then select all 3 here.</p>
+<label>Select photos <input id="t2" type="file" accept="image/*" multiple></label>
+
+<h2>Test 3: camera inside the page</h2>
+<p>Needs HTTPS. Repeat for each camera in the list.</p>
+<button id="open">Open camera</button>
+<label>Camera <select id="cams"></select></label>
+<video id="v" playsinline muted autoplay></video>
+<button id="shot">Take photo</button>
+
+<h2>Test 4: read the camera folder</h2>
+<p>Android only. Select the folder with the camera photos (DCIM, then Camera). The page reads file sizes and times. It reports no file names.</p>
+<button id="dir">Select folder</button>
+
+<h2>Results</h2>
+<button id="copy">Copy results</button>
+<pre id="out" aria-live="polite"></pre>
+
+<script src="/probe.js"></script>
+</body>
+</html>
