@@ -1,14 +1,7 @@
-// Worker for rezanci.net. Static files come from ./public. This code handles /api/ only.
+// Worker for rezanci.net. Static files come from ./public. This code handles /api/ only:
+// it checks who sent the request, then calls the handler from api.js.
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-
-// Headers for each API answer: no cache, no use inside a frame, no content type guess, no referrer.
-const API_HEADERS = {
-  'Cache-Control': 'no-store',
-  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
-  'Referrer-Policy': 'no-referrer',
-  'Cross-Origin-Resource-Policy': 'same-origin',
-};
-const json = (body, status = 200) => Response.json(body, { status, headers: API_HEADERS });
+import { json, routes as apiRoutes, readJson, operatorFor, Refusal } from './api.js';
 
 // True if a browser sent the request from a different site. The Origin header is the fallback
 // for a browser that sends no Sec-Fetch-Site header. A client that sends neither is not a browser.
@@ -36,29 +29,47 @@ export async function accessClaims(token, keys, issuer, audience) {
 // Signing keys of the Access team. jose keeps them and loads them again for an unknown key ID.
 let accessKeys;
 
-// One entry per endpoint: "METHOD /path". A path that is not in this table does not exist.
-// A handler under /api/mod gets the claims of the moderator as the last argument.
 const routes = {
   // Public endpoint, so it makes no storage call: each request must be cheap.
   // COMMIT is set at deploy time, so anyone can compare the running code with the repository.
-  'GET /api/health': (request, env) => json({ ok: true, commit: env.COMMIT ?? 'dev' }),
-  'GET /api/mod/whoami': (request, env, url, moderator) => json({ email: moderator.email, amr: moderator.amr ?? null }),
+  'GET /api/health': ({ env }) => ({ ok: true, commit: env.COMMIT ?? 'dev' }),
+  ...apiRoutes,
 };
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    const safe = request.method === 'GET' || request.method === 'HEAD';
-    if (!safe && isCrossSite(request.headers, url.origin)) return json({ error: 'cross-site request refused' }, 403);
-    let moderator = null;
-    // The login check runs here and not in the handlers, so no moderator endpoint can omit it.
-    if (url.pathname.startsWith('/api/mod')) {
-      const issuer = `https://${env.ACCESS_TEAM}`;
-      accessKeys ??= createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
-      moderator = await accessClaims(request.headers.get('Cf-Access-Jwt-Assertion'), accessKeys, issuer, env.ACCESS_AUD);
-      if (!moderator) return json({ error: 'moderator login required' }, 401);
+    try {
+      const url = new URL(request.url);
+      const safe = request.method === 'GET' || request.method === 'HEAD';
+      if (!safe && isCrossSite(request.headers, url.origin)) return json({ error: 'cross-site request refused' }, 403);
+      const ctx = { request, env, url, db: env.DB, now: new Date().toISOString() };
+
+      // The login checks run here and not in the handlers, so no endpoint can omit them.
+      if (url.pathname.startsWith('/api/mod')) {
+        const issuer = `https://${env.ACCESS_TEAM}`;
+        accessKeys ??= createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
+        const claims = await accessClaims(request.headers.get('Cf-Access-Jwt-Assertion'), accessKeys, issuer, env.ACCESS_AUD);
+        if (!claims) return json({ error: 'moderator login required' }, 401);
+        ctx.moderator = { email: claims.email.toLowerCase(), amr: claims.amr };
+      }
+      if (url.pathname.startsWith('/api/op')) {
+        const operator = await operatorFor(request, env.DB);
+        // "ended" tells the phone why its session stopped, so the screen can show the reason.
+        if (!operator) return json({ error: 'This phone has no session. Scan the code on the moderator screen.', ended: 'none' }, 401);
+        if (operator.removed_at) return json({ error: 'The moderator removed this phone from the bag.', ended: 'removed' }, 401);
+        if (operator.closed_at) return json({ error: 'This bag is closed.', ended: 'closed' }, 401);
+        ctx.operator = operator;
+      }
+
+      const handler = routes[`${request.method} ${url.pathname}`];
+      if (!handler) return json({ error: 'not found' }, 404);
+      if (request.method === 'POST') ctx.body = await readJson(request);
+      const answer = await handler(ctx);
+      return answer instanceof Response ? answer : json(answer);
+    } catch (e) {
+      if (e instanceof Refusal) return json({ error: e.message, ...e.extra }, e.status);
+      console.error(e);   // goes to the Worker log
+      return json({ error: 'server error' }, 500);
     }
-    const handler = routes[`${request.method} ${url.pathname}`];
-    return handler ? handler(request, env, url, moderator) : json({ error: 'not found' }, 404);
   },
 };
