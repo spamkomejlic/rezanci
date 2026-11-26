@@ -12,11 +12,43 @@ const API_HEADERS = {
 export const json = (body, status = 200, headers = {}) =>
   Response.json(body, { status, headers: { ...API_HEADERS, ...headers } });
 
-// A handler throws a Refusal to answer with an error status and a message for the person.
+// Each refusal has a short code. The screens translate the code. The text here is the English form.
+export const ERRORS = {
+  cross_site: 'Request from a different site refused.',
+  not_found: 'Not found.',
+  server: 'Server error.',
+  mod_login: 'Moderator login required.',
+  op_none: 'This phone has no session. Scan the code on the moderator screen.',
+  op_removed: 'The moderator removed this phone from the bag.',
+  op_closed: 'This bag is closed.',
+  body_size: 'Request body: JSON of 4096 bytes or less, with a length header.',
+  body_json: 'Request body: a JSON object.',
+  location_code: 'Location code: 2 to 6 capital letters or digits. The first is a letter.',
+  location_name: 'Location name: 1 to 80 characters.',
+  location_used: 'This location code is in use.',
+  location_unknown: 'Location not found.',
+  count: 'Count: 1 to 200.',
+  label: 'This is not a valid bag label.',
+  material: 'Material: shredded, torn or sheets.',
+  bag_unknown: 'Bag not found. Only a printed label works.',
+  mod_has_bag: 'You have an open bag. Close it first.',
+  bag_open: 'A different moderator has this bag open.',
+  reopen_reason: 'This bag was closed before. Write a reason (10 characters or more) to open it again.',
+  open_race: 'This bag or this moderator already has an open session.',
+  no_bag: 'You have no open bag.',
+  force_reason: 'Force close: write a reason of 10 characters or more.',
+  blocked: 'Close is blocked.',
+  tray: 'Confirm that the source tray is empty.',
+  phone_unknown: 'Phone not found in this session.',
+  code: 'This code is not valid. Scan the code on the moderator screen again.',
+  name: 'Name: 1 to 40 characters.',
+  phone_id: 'Phone ID is not valid.',
+};
 export class Refusal extends Error {
-  constructor(status, message, extra = {}) { super(message); this.status = status; this.extra = extra; }
+  constructor(status, code, extra = {}) { super(ERRORS[code]); this.status = status; this.code = code; this.extra = extra; }
 }
-const refuse = (status, message, extra) => { throw new Refusal(status, message, extra); };
+const refuse = (status, code, extra) => { throw new Refusal(status, code, extra); };
+export const refusal = (status, code, extra = {}) => json({ error: ERRORS[code], code, ...extra }, status);
 
 export const MATERIALS = ['shredded', 'torn', 'sheets'];
 export const OPERATOR_COOKIE = '__Host-op';
@@ -54,7 +86,7 @@ const event = (db, at, session, actor, type, detail = null) =>
 const openSession = (db, moderator) => db.prepare(
   `SELECT s.id, s.bag_id, b.location_code, s.material, s.opened_at
    FROM sessions s JOIN bags b ON b.id = s.bag_id WHERE s.moderator = ? AND s.closed_at IS NULL`).bind(moderator).first();
-const mustHaveOpen = async (db, moderator) => (await openSession(db, moderator)) ?? refuse(409, 'You have no open bag.');
+const mustHaveOpen = async (db, moderator) => (await openSession(db, moderator)) ?? refuse(409, 'no_bag');
 
 const phonesOf = async (db, session) => (await db.prepare(
   `SELECT e.rowid AS id, e.operator_name AS name, e.enrolled_at, e.done_at, e.removed_at,
@@ -65,8 +97,8 @@ const phonesOf = async (db, session) => (await db.prepare(
 // Reasons that block a normal close. An empty list means that the close rule holds:
 // each phone is Done and each image record is verified.
 const blockersOf = phones => [
-  ...phones.filter(p => !p.removed_at && !p.done_at).map(p => `Phone not done: ${p.name}`),
-  ...phones.filter(p => p.images > p.verified).map(p => `Images not verified: ${p.images - p.verified} from ${p.name}`),
+  ...phones.filter(p => !p.removed_at && !p.done_at).map(p => ({ kind: 'not_done', name: p.name })),
+  ...phones.filter(p => p.images > p.verified).map(p => ({ kind: 'not_verified', name: p.name, count: p.images - p.verified })),
 ];
 
 // Session of the operator phone that sent the request, from its cookie. Null if there is none.
@@ -89,9 +121,9 @@ export const routes = {
 
   'POST /api/mod/locations': async ({ db, body, moderator, now }) => {
     const code = String(body.code ?? ''), name = String(body.name ?? '').trim();
-    if (!/^[A-Z][A-Z0-9]{1,5}$/.test(code)) refuse(400, 'Location code: 2 to 6 capital letters or digits. The first is a letter.');
-    if (!name || name.length > 80) refuse(400, 'Location name: 1 to 80 characters.');
-    if (await db.prepare('SELECT 1 FROM locations WHERE code = ?').bind(code).first()) refuse(409, 'This location code is in use.');
+    if (!/^[A-Z][A-Z0-9]{1,5}$/.test(code)) refuse(400, 'location_code');
+    if (!name || name.length > 80) refuse(400, 'location_name');
+    if (await db.prepare('SELECT 1 FROM locations WHERE code = ?').bind(code).first()) refuse(409, 'location_used');
     await db.batch([
       db.prepare('INSERT INTO locations (code, name, created_at) VALUES (?, ?, ?)').bind(code, name, now),
       event(db, now, null, moderator.email, 'location', { code, name }),
@@ -103,8 +135,8 @@ export const routes = {
   // Only a bag from this endpoint can be opened, so a label that nobody printed does not work.
   'POST /api/mod/bags': async ({ db, body, moderator, now }) => {
     const location = String(body.location ?? ''), count = body.count;
-    if (!Number.isInteger(count) || count < 1 || count > 200) refuse(400, 'Count: 1 to 200.');
-    if (!await db.prepare('SELECT 1 FROM locations WHERE code = ?').bind(location).first()) refuse(404, 'Location not found.');
+    if (!Number.isInteger(count) || count < 1 || count > 200) refuse(400, 'count');
+    if (!await db.prepare('SELECT 1 FROM locations WHERE code = ?').bind(location).first()) refuse(404, 'location_unknown');
     const [made] = await db.batch([
       db.prepare(
         `WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < ?1)
@@ -126,20 +158,20 @@ export const routes = {
 
   'POST /api/mod/session': async ({ db, body, moderator, now }) => {
     const bag = parseLabel(body.label);
-    if (!bag) refuse(400, 'This is not a valid bag label.');
-    if (!MATERIALS.includes(body.material)) refuse(400, 'Material: shredded, torn or sheets.');
+    if (!bag) refuse(400, 'label');
+    if (!MATERIALS.includes(body.material)) refuse(400, 'material');
     const state = await db.prepare(
       `SELECT (SELECT COUNT(*) FROM bags WHERE id = ?1 AND location_code = ?2) AS known,
               (SELECT COUNT(*) FROM sessions WHERE bag_id = ?1 AND closed_at IS NULL) AS open,
               (SELECT COUNT(*) FROM sessions WHERE bag_id = ?1 AND closed_at IS NOT NULL) AS closed,
               (SELECT COUNT(*) FROM sessions WHERE moderator = ?3 AND closed_at IS NULL) AS mine`)
       .bind(bag.bag, bag.location, moderator.email).first();
-    if (!state.known) refuse(404, 'Bag not found. Only a printed label works.');
-    if (state.mine) refuse(409, 'You have an open bag. Close it first.');
-    if (state.open) refuse(409, 'A different moderator has this bag open.');
+    if (!state.known) refuse(404, 'bag_unknown');
+    if (state.mine) refuse(409, 'mod_has_bag');
+    if (state.open) refuse(409, 'bag_open');
     const reason = String(body.reason ?? '').trim();
     if (state.closed && reason.length < 10)
-      refuse(409, 'This bag was closed before. Write a reason (10 characters or more) to open it again.', { needs_reason: true });
+      refuse(409, 'reopen_reason', { needs_reason: true });
     const id = crypto.randomUUID();
     try {
       await db.batch([
@@ -149,7 +181,7 @@ export const routes = {
       ]);
     } catch (e) {
       // Two requests at the same time: the unique indexes of the database refuse the second one.
-      if (/constraint/i.test(e.message)) refuse(409, 'This bag or this moderator already has an open session.');
+      if (/constraint/i.test(e.message)) refuse(409, 'open_race');
       throw e;
     }
     return { id, label: bagLabel(bag.location, bag.bag) };
@@ -159,9 +191,9 @@ export const routes = {
     const s = await mustHaveOpen(db, moderator.email);
     const blockers = blockersOf(await phonesOf(db, s.id));
     const reason = String(body.force_reason ?? '').trim(), forced = reason !== '';
-    if (forced && reason.length < 10) refuse(400, 'Force close: write a reason of 10 characters or more.');
-    if (!forced && blockers.length) refuse(409, 'Close is blocked.', { blockers });
-    if (!forced && body.tray_empty !== true) refuse(400, 'Confirm that the source tray is empty.');
+    if (forced && reason.length < 10) refuse(400, 'force_reason');
+    if (!forced && blockers.length) refuse(409, 'blocked', { blockers });
+    if (!forced && body.tray_empty !== true) refuse(400, 'tray');
     // ponytail: no manifest file yet. It comes with the upload step, when image records exist.
     await db.batch([
       db.prepare('UPDATE sessions SET closed_at = ?, close_type = ?, force_reason = ? WHERE id = ? AND closed_at IS NULL')
@@ -187,7 +219,7 @@ export const routes = {
     const phone = await db.prepare(
       'UPDATE enrollments SET removed_at = ?1 WHERE rowid = ?2 AND session_id = ?3 AND removed_at IS NULL RETURNING operator_name AS name')
       .bind(now, Number.isInteger(body.id) ? body.id : -1, s.id).first();
-    if (!phone) refuse(404, 'Phone not found in this session.');
+    if (!phone) refuse(404, 'phone_unknown');
     await event(db, now, s.id, moderator.email, 'remove', { phone: body.id, name: phone.name }).run();
     return { removed: true };
   },
@@ -197,15 +229,15 @@ export const routes = {
     const code = String(body.code ?? ''), phone = String(body.phone ?? '');
     // The name goes into the record and onto the moderator screen: one line, no control characters.
     const name = String(body.name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!/^[A-Za-z0-9_-]{22}$/.test(code)) refuse(403, 'This code is not valid. Scan the code on the moderator screen again.');
-    if (!name || name.length > 40) refuse(400, 'Name: 1 to 40 characters.');
-    if (!/^[A-Za-z0-9-]{8,64}$/.test(phone)) refuse(400, 'Phone ID is not valid.');
+    if (!/^[A-Za-z0-9_-]{22}$/.test(code)) refuse(403, 'code');
+    if (!name || name.length > 40) refuse(400, 'name');
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(phone)) refuse(400, 'phone_id');
     // One statement uses up the code. If two phones send the same code, only the first gets a session.
     const used = await db.prepare(
       `UPDATE enroll_codes SET used_at = ?1 WHERE code_hash = ?2 AND used_at IS NULL AND expires_at > ?1
          AND session_id IN (SELECT id FROM sessions WHERE closed_at IS NULL) RETURNING session_id`)
       .bind(now, await hash(code)).first();
-    if (!used) refuse(403, 'This code is not valid. Scan the code on the moderator screen again.');
+    if (!used) refuse(403, 'code');
     // The phone keeps the token in a cookie that page code cannot read. The database keeps only its hash.
     const token = randomToken(32);
     await db.batch([
@@ -234,7 +266,7 @@ export const routes = {
 // Body of a POST request as an object. The size limit keeps a large body out of memory.
 export async function readJson(request) {
   const length = Number(request.headers.get('Content-Length') ?? NaN);
-  if (!(length <= 4096)) refuse(length > 4096 ? 413 : 411, 'Request body: JSON of 4096 bytes or less, with a length header.');
+  if (!(length <= 4096)) refuse(length > 4096 ? 413 : 411, 'body_size');
   const value = await request.json().catch(() => null);
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : refuse(400, 'Request body: a JSON object.');
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : refuse(400, 'body_json');
 }

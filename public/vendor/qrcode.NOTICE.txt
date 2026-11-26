@@ -1,0 +1,6 @@
+qrcode.js
+
+Source: npm package qrcode-generator, version 2.0.4, file dist/qrcode.mjs, not changed.
+Project: https://github.com/kazuhikoarase/qrcode-generator
+License: MIT, Copyright (c) 2009 Kazuhiko Arase. The license text is at the top of the file.
+SHA-256: ea91d7118a5395289170da848b7c6758b996163bfbccf312591ab65a4911b7c0

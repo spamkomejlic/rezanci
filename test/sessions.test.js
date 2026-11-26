@@ -91,7 +91,7 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
   let state = (await mod('GET /api/mod/session', ana)).session;
   assert.equal(state.label, first[0]);
   assert.deepEqual(state.phones.map(p => p.name), ['Mira']);
-  assert.deepEqual(state.blockers, ['Phone not done: Mira']);
+  assert.deepEqual(state.blockers, [{ kind: 'not_done', name: 'Mira' }]);
   await refused(mod('POST /api/mod/session/close', ana, { tray_empty: true }), 409);
   assert.deepEqual(await (await call('POST', '/api/op/done', { cookie, body: { done: true } })).json(), { done: true });
   await refused(mod('POST /api/mod/session/close', ana, {}), 400);

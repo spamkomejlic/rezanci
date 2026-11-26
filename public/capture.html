@@ -2,18 +2,56 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Capture</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
+<title>rezanci</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<h1>Capture</h1>
-<p>Test version. Photos stay on this phone. Upload is not connected yet.</p>
-<input id="camera" type="file" accept="image/*" capture="environment" hidden>
-<button id="capture" class="big">Capture</button>
-<p id="status" role="status" aria-live="polite"></p>
-<p>On this phone: <strong id="count">0</strong> photos, <strong id="size">0</strong> MB.</p>
-<button id="clear">Remove test photos</button>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/"><span class="brand-mark"></span>rezanci</a>
+    <span id="operator" class="pill plain" hidden></span>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+    <!-- This phone has no bag: no session, bag closed, or removed by the moderator. -->
+    <section id="ended" class="card tint" data-group="main" hidden>
+      <h1 id="ended-text"></h1>
+    </section>
+
+    <div id="work" class="stack" data-group="main" hidden>
+      <section class="card tint">
+        <div class="row"><span class="eyebrow grow" data-t="cap.bag">Bag</span><span id="material" class="pill plain"></span></div>
+        <div id="label" class="bag-label"></div>
+        <p class="muted small" data-t="cap.check">Check that this is the label on the bag at your table.</p>
+      </section>
+
+      <section class="card center">
+        <input id="camera" type="file" accept="image/*" capture="environment" hidden>
+        <button id="capture" class="shutter" type="button" data-t="cap.shoot">Capture</button>
+        <p id="shot" class="status" role="status" aria-live="polite" hidden></p>
+        <div class="stats two">
+          <div class="stat"><b id="count">0</b><span data-t="cap.onphone">on this phone</span></div>
+          <div class="stat"><b id="size">0</b><span data-t="cap.mb">MB on this phone</span></div>
+        </div>
+        <p class="muted small" data-t="cap.noupload">Test version: photos stay on this phone. Upload comes in the next version.</p>
+        <button id="clear" class="btn ghost small" type="button" data-t="cap.clear">Remove test photos</button>
+      </section>
+
+      <section class="card">
+        <h2 data-t="cap.done.title">Finished with this bag?</h2>
+        <p id="done-lead" class="muted small"></p>
+        <button id="done" class="btn soft wide" type="button"></button>
+      </section>
+    </div>
+  </main>
+</div>
 <script type="module" src="/capture.js"></script>
 </body>
 </html>

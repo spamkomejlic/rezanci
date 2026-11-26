@@ -2,14 +2,93 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
 <title>rezanci moderator</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<h1>Moderator</h1>
-<p id="who">Checking the login...</p>
-<p><a href="/cdn-cgi/access/logout">Log out</a></p>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/mod/"><span class="brand-mark"></span>rezanci</a>
+    <span class="pill plain" data-t="mod.title">Moderator</span>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+    <section id="login" class="card" data-group="main" hidden>
+      <h1 data-t="mod.login.expired">The login ended. Log in again.</h1>
+      <a class="btn wide" href="/mod/" data-t="mod.login.again">Log in</a>
+    </section>
+
+    <section id="idle" class="card tint" data-group="main" hidden>
+      <h1 data-t="mod.idle.title">No open bag</h1>
+      <p class="muted" data-t="mod.idle.lead">Scan the label on a bag with the phone camera. The bag opens on this screen.</p>
+      <a class="btn soft wide" href="/mod/labels" data-t="mod.labels.link">Labels and locations</a>
+    </section>
+
+    <form id="open" class="card tint" data-group="main" hidden>
+      <h1 data-t="mod.open.title">Open this bag?</h1>
+      <div id="open-label" class="bag-label"></div>
+      <p class="eyebrow" data-t="mod.open.material">What is in the bag?</p>
+      <div class="seg">
+        <label><input type="radio" name="material" value="shredded"><span data-t="material.shredded">Shredded</span></label>
+        <label><input type="radio" name="material" value="torn"><span data-t="material.torn">Torn</span></label>
+        <label><input type="radio" name="material" value="sheets"><span data-t="material.sheets">Whole sheets</span></label>
+      </div>
+      <label id="reason-field" class="field" hidden><span data-t="mod.open.reason">Reason to open it again</span>
+        <textarea id="reason" maxlength="300"></textarea></label>
+      <button class="btn wide" type="submit" data-t="mod.open.go">Open the bag</button>
+      <button id="open-cancel" class="btn ghost wide" type="button" data-t="mod.open.cancel">Not this bag</button>
+    </form>
+
+    <div id="bag" class="stack" data-group="main" hidden>
+      <section class="card tint">
+        <div class="row"><span class="eyebrow grow" data-t="cap.bag">Bag</span><span id="material" class="pill plain"></span></div>
+        <div id="label" class="bag-label"></div>
+        <p id="opened" class="muted small"></p>
+      </section>
+
+      <section class="card">
+        <h2 data-t="mod.qr.title">Add a phone</h2>
+        <p class="muted small" data-t="mod.qr.lead">The operator scans this code with the phone camera. One code works for one phone.</p>
+        <div class="qr"><canvas id="qr" width="8" height="8"></canvas></div>
+        <div class="meter"><i id="qr-meter"></i></div>
+        <div class="row">
+          <span id="qr-left" class="muted small grow"></span>
+          <button id="qr-new" class="btn ghost small" type="button" data-t="mod.qr.new">New code</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 data-t="mod.phones.title">Phones</h2>
+        <p id="phones-none" class="muted" data-t="mod.phones.none">No phone has joined.</p>
+        <ul id="phones" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <h2 data-t="mod.close.title">Close the bag</h2>
+        <p id="close-lead" class="muted small"></p>
+        <ul id="blockers" class="list plain small"></ul>
+        <label class="check"><input id="tray" type="checkbox"><span data-t="mod.close.tray">The source tray is empty</span></label>
+        <button id="close" class="btn wide" type="button" data-t="mod.close.go" disabled>Close the bag</button>
+        <details>
+          <summary data-t="mod.force.title">Force close</summary>
+          <div class="stack">
+            <p class="muted small" data-t="mod.force.lead">Use this only if the bag cannot be completed. The record keeps your reason.</p>
+            <label class="field"><span data-t="mod.force.reason">Reason</span>
+              <textarea id="force-reason" maxlength="300"></textarea></label>
+            <button id="force" class="btn danger wide" type="button" data-t="mod.force.go">Force close</button>
+          </div>
+        </details>
+      </section>
+    </div>
+  </main>
+  <footer class="foot"><span id="who"></span> <a href="/cdn-cgi/access/logout" data-t="mod.logout">Log out</a></footer>
+</div>
 <script type="module" src="/mod/mod.js"></script>
 </body>
 </html>

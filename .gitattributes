@@ -1,0 +1,3 @@
+# Text files have the same line ends on each system. The vendored file has a recorded hash, so it is never changed.
+* text=auto eol=lf
+public/vendor/* -text

@@ -1,0 +1,11 @@
+{
+  "name": "rezanci",
+  "short_name": "rezanci",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#e8f3fd",
+  "theme_color": "#255f9c",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

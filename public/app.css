@@ -1,6 +1,222 @@
-body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 32rem; padding: 0 1rem; }
-code { background: #eee; color: #000; padding: .1rem .3rem; }
-button { font: inherit; padding: .6rem 1rem; }
-button.big { width: 100%; padding: 1.5rem; font-size: 1.5rem; }
-.good { color: #0a5c2b; }
-.bad { color: #a40000; font-weight: bold; }
+/* Look of the app. Mobile first, one column, large touch targets.
+
+   Color scheme, built in OKLCH and written as hex:
+   - Base: off pastel blue, hue 245.
+   - Accent: the complement of the base (hue 65), a soft apricot. Used in small amounts.
+   - Neighbors of the base (teal 205, violet 285) only in the background glow.
+   - Text: deep navy of the base hue.
+   Each text and button pair has a contrast of 4.5:1 or more (WCAG AA). */
+
+:root {
+  color-scheme: light dark;
+  --bg: #e8f3fd;          --bg-2: #d8ebfb;        --surface: #fafdff;
+  --blue: #a5c9e8;        --blue-soft: #cde3f6;   --teal: #abdbe1;      --violet: #c3c3ee;
+  --primary: #255f9c;     --primary-press: #114b83; --on-primary: #ffffff;
+  --accent: #f3c191;      --accent-strong: #da8844; --on-fill: #152537;
+  --ink: #152537;         --ink-2: #495a6b;       --line: #cdd9e4;
+  --good: #146f46;        --good-soft: #d0f2dd;
+  --warn: #895709;        --warn-soft: #ffe8c2;
+  --bad: #ae2e2a;         --bad-soft: #ffe1de;
+  --shadow: 0 1px 2px rgb(21 37 55 / .06), 0 10px 28px rgb(37 95 156 / .12);
+  --radius: 20px;
+  --radius-s: 14px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0a1520;        --bg-2: #101e2d;        --surface: #162433;
+    --blue: #92bde2;      --blue-soft: #233a51;   --teal: #6db2b9;      --violet: #9998cf;
+    --primary: #95c3eb;   --primary-press: #b1d6f6; --on-primary: #0a1520;
+    --accent: #f0bc89;    --accent-strong: #efa464; --on-fill: #0a1520;
+    --ink: #e6eef5;       --ink-2: #a2b4c3;       --line: #2f3f4f;
+    --good: #7dd3a3;      --good-soft: #173b28;
+    --warn: #edbf71;      --warn-soft: #463111;
+    --bad: #f4928a;       --bad-soft: #542523;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 12px 32px rgb(0 0 0 / .35);
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100dvh;
+  font: 16px/1.5 var(--font); color: var(--ink); background: var(--bg);
+  -webkit-tap-highlight-color: transparent;
+}
+/* Soft glow behind the page: base blue, its neighbor violet, and the apricot accent at the bottom. */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60rem 30rem at -10% -10%, var(--blue-soft), transparent 60%),
+    radial-gradient(40rem 26rem at 110% 0%, color-mix(in srgb, var(--violet) 50%, transparent), transparent 60%),
+    radial-gradient(36rem 22rem at 50% 118%, color-mix(in srgb, var(--accent) 50%, transparent), transparent 60%);
+}
+
+.app {
+  max-width: 30rem; min-height: 100dvh; margin: 0 auto;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) calc(1.5rem + env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  display: flex; flex-direction: column; gap: 1rem;
+}
+.top { display: flex; align-items: center; gap: .6rem; }
+.brand { display: flex; align-items: center; gap: .6rem; margin-right: auto; color: inherit; text-decoration: none; font-weight: 700; letter-spacing: -.01em; }
+.brand-mark {
+  position: relative; width: 2rem; height: 2rem; border-radius: .7rem;
+  background: linear-gradient(135deg, var(--blue), var(--primary));
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / .3), var(--shadow);
+}
+.brand-mark::after {   /* scan corner in the accent color */
+  content: ""; position: absolute; inset: .42rem; border-radius: .25rem;
+  border: 2px solid var(--accent); border-left-color: transparent; border-bottom-color: transparent;
+}
+
+h1 { margin: 0; font-size: 1.6rem; line-height: 1.2; letter-spacing: -.02em; }
+h2 { margin: 0; font-size: 1.1rem; line-height: 1.3; letter-spacing: -.01em; }
+p { margin: 0; }
+a { color: var(--primary); text-underline-offset: .2em; }
+.muted { color: var(--ink-2); }
+.small { font-size: .875rem; }
+.center { text-align: center; }
+.stack { display: flex; flex-direction: column; gap: .75rem; }
+.row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+code { font-family: var(--mono); font-size: .9em; }
+
+.card {
+  display: flex; flex-direction: column; gap: .75rem; padding: 1.1rem;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+  animation: rise .35s ease-out both;
+}
+@supports (backdrop-filter: blur(1px)) {
+  .card { background: color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter: blur(14px) saturate(1.2); }
+}
+.card:nth-of-type(2) { animation-delay: .05s; }
+.card:nth-of-type(3) { animation-delay: .1s; }
+.card.tint { background: linear-gradient(160deg, var(--blue-soft), var(--surface) 70%); }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+/* Bag label in large type, so a person can compare it with the label on the bag. */
+.bag-label { font: 800 clamp(1.7rem, 9vw, 2.4rem)/1.1 var(--mono); letter-spacing: .02em; overflow-wrap: anywhere; }
+.eyebrow { font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
+  min-height: 3.25rem; padding: .7rem 1.2rem; border: 0; border-radius: 1rem;
+  font: 650 1rem var(--font); text-decoration: none; cursor: pointer;
+  color: var(--on-primary); background: var(--primary);
+  box-shadow: 0 6px 16px rgb(37 95 156 / .28);
+  transition: transform .08s ease, background .15s ease, box-shadow .15s ease;
+}
+.btn:active { transform: scale(.98); background: var(--primary-press); box-shadow: none; }
+.btn.wide { width: 100%; }
+.btn.soft { color: var(--ink); background: var(--blue-soft); box-shadow: none; }
+.btn.ghost { color: var(--primary); background: transparent; box-shadow: none; border: 1.5px solid var(--line); }
+.btn.danger { color: var(--bad); background: var(--bad-soft); box-shadow: none; }
+.btn.small { min-height: 2.5rem; padding: .4rem .8rem; font-size: .875rem; border-radius: .8rem; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; box-shadow: none; cursor: default; }
+:focus-visible { outline: 3px solid var(--accent-strong); outline-offset: 2px; }
+
+.chip {
+  min-height: 2.25rem; padding: .25rem .8rem; border-radius: 99px; border: 1px solid var(--line);
+  font: 650 .8rem var(--font); color: var(--ink); background: var(--surface); cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center;
+}
+
+.pill { display: inline-flex; align-items: center; gap: .35rem; padding: .15rem .65rem; border-radius: 99px; font-size: .8rem; font-weight: 650; color: var(--ink); background: var(--blue-soft); white-space: nowrap; }
+.pill::before { content: ""; width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
+.pill.good { color: var(--good); background: var(--good-soft); }
+.pill.warn { color: var(--warn); background: var(--warn-soft); }
+.pill.bad { color: var(--bad); background: var(--bad-soft); }
+.pill.plain::before { display: none; }
+
+.status { padding: .7rem .9rem; border-radius: var(--radius-s); background: var(--blue-soft); font-weight: 550; }
+.status.good { color: var(--good); background: var(--good-soft); }
+.status.bad { color: var(--bad); background: var(--bad-soft); }
+
+/* Round capture button with an accent ring that breathes while the phone waits for a shot. */
+.shutter {
+  position: relative; width: 9.5rem; height: 9.5rem; margin: 1.4rem auto 1rem; border: 0; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  font: 700 1.3rem var(--font); color: var(--on-primary);
+  background: var(--primary);
+  background: radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--primary) 72%, white), var(--primary) 58%, var(--primary-press));
+  box-shadow: 0 0 0 .5rem var(--surface), 0 0 0 .78rem var(--accent), 0 1.2rem 2.2rem rgb(37 95 156 / .35);
+  transition: transform .08s ease;
+}
+.shutter::before {
+  content: ""; position: absolute; inset: -1.25rem; border-radius: 50%; border: 2px solid var(--accent-strong);
+  opacity: 0; animation: breathe 2.6s ease-out infinite;
+}
+.shutter:active { transform: scale(.95); }
+.shutter:disabled { opacity: .5; filter: grayscale(.5); cursor: default; }
+.shutter:disabled::before { animation: none; }
+@keyframes breathe { 0% { transform: scale(.9); opacity: .75; } 100% { transform: scale(1.12); opacity: 0; } }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .6rem; }
+.stats.two { grid-template-columns: repeat(2, 1fr); }
+.stat { padding: .7rem .5rem; border-radius: var(--radius-s); background: var(--bg-2); text-align: center; }
+.stat b { display: block; font-size: 1.5rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat span { font-size: .75rem; color: var(--ink-2); }
+
+.field { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; font-size: .9rem; }
+.field input, .field select, .field textarea {
+  width: 100%; min-height: 3.25rem; padding: .7rem .9rem; border-radius: var(--radius-s);
+  border: 1.5px solid var(--ink-2); border-color: color-mix(in srgb, var(--ink-2) 65%, var(--surface));
+  font: 500 1rem var(--font); color: var(--ink); background: var(--surface);
+}
+.field textarea { min-height: 5.5rem; resize: vertical; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: 3px solid var(--blue); outline-offset: 0; border-color: var(--primary); }
+
+/* One choice of a few, as large buttons. */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: .4rem; padding: .3rem; border-radius: 1.1rem; background: var(--bg-2); }
+.seg label { position: relative; }
+.seg input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.seg span { display: grid; place-items: center; min-height: 3rem; padding: .3rem; border-radius: .85rem; font-weight: 650; font-size: .9rem; text-align: center; color: var(--ink-2); transition: background .15s ease, color .15s ease; }
+.seg input:checked + span { color: var(--on-primary); background: var(--primary); box-shadow: 0 4px 12px rgb(37 95 156 / .3); }
+.seg input:focus-visible + span { outline: 3px solid var(--accent-strong); outline-offset: 2px; }
+
+.check { display: flex; align-items: center; gap: .7rem; min-height: 3rem; font-weight: 600; }
+.check input { width: 1.6rem; height: 1.6rem; accent-color: var(--primary); flex: none; }
+
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; align-items: center; gap: .6rem; padding: .7rem 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; padding-top: 0; }
+.list li:last-child { padding-bottom: 0; }
+.list .name { font-weight: 650; overflow-wrap: anywhere; }
+.list.plain li { border: 0; padding: .15rem 0; }
+
+details > summary { cursor: pointer; font-weight: 650; color: var(--ink-2); min-height: 2.5rem; display: flex; align-items: center; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after {   /* small arrow that turns when the part opens */
+  content: ""; width: .5rem; height: .5rem; margin: 0 .3rem .2rem auto;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); transition: transform .15s ease;
+}
+details[open] > summary::after { transform: rotate(-135deg); margin-bottom: -.2rem; }
+details[open] > summary { margin-bottom: .75rem; }
+
+/* QR code: always dark on white with a white frame, so each phone camera reads it, also in dark mode. */
+.qr { width: min(100%, 17rem); margin: 0 auto; padding: .8rem; border-radius: var(--radius); background: #fff; box-shadow: 0 0 0 1px var(--line), 0 0 0 .35rem color-mix(in srgb, var(--accent) 55%, transparent); }
+.qr canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.meter { height: .4rem; border-radius: 99px; background: var(--bg-2); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--accent-strong)); transform-origin: left; transition: transform 1s linear; }
+
+.foot { margin-top: auto; padding-top: .5rem; text-align: center; font-size: .8rem; color: var(--ink-2); }
+
+/* Sheet of bag labels. */
+.sheet { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; }
+.tag { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .7rem; border-radius: var(--radius-s); border: 1.5px dashed var(--ink-2); background: #fff; color: #152537; break-inside: avoid; text-decoration: none; }
+.tag canvas { width: 100%; max-width: 11rem; height: auto; image-rendering: pixelated; }
+.tag b { font: 800 1rem var(--mono); letter-spacing: .02em; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media print {
+  body { background: #fff; color: #000; }
+  body::before, .no-print, .top, .foot { display: none !important; }
+  .app { max-width: none; padding: 0; }
+  .card { box-shadow: none; border: 0; padding: 0; background: none; backdrop-filter: none; animation: none; }
+  .sheet { grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+  .tag { border: 1px dashed #666; }
+}

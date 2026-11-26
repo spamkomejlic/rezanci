@@ -2,14 +2,30 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rezanci.net</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
+<title>rezanci</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<h1>rezanci.net</h1>
-<p>Capture app. Not in service yet.</p>
-<p>Running code: <code id="commit">...</code></p>
-<script src="/app.js"></script>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/"><span class="brand-mark"></span>rezanci</a>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <section class="card tint">
+      <h1 data-t="home.title">Paper capture</h1>
+      <p class="muted" data-t="home.lead">Scan the code on the moderator screen with the phone camera to join a bag.</p>
+      <a id="continue" class="btn wide" href="/capture" hidden></a>
+    </section>
+    <a class="btn ghost wide" href="/mod/" data-t="home.moderator">I am a moderator</a>
+  </main>
+  <footer class="foot"><span data-t="home.code">Running code:</span> <code id="commit">...</code></footer>
+</div>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

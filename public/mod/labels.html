@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
+<title>rezanci labels</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/mod/"><span class="brand-mark"></span>rezanci</a>
+    <a class="chip" href="/mod/" data-t="lab.back">Back</a>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <h1 class="no-print" data-t="lab.title">Labels and locations</h1>
+    <p id="status" class="status no-print" role="status" aria-live="polite" hidden></p>
+
+    <section class="card no-print">
+      <h2 data-t="lab.loc.title">Locations</h2>
+      <p id="loc-none" class="muted" data-t="lab.loc.none" hidden>No location yet. Add one first.</p>
+      <ul id="locations" class="list"></ul>
+      <form id="loc-form" class="stack">
+        <label class="field"><span data-t="lab.loc.code">Code (example: L01)</span>
+          <input id="loc-code" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false" required></label>
+        <label class="field"><span data-t="lab.loc.name">Name</span>
+          <input id="loc-name" maxlength="80" autocomplete="off" required></label>
+        <button class="btn soft wide" type="submit" data-t="lab.loc.add">Add location</button>
+      </form>
+    </section>
+
+    <form id="make" class="card no-print">
+      <h2 data-t="lab.make.title">New labels</h2>
+      <p class="muted small" data-t="lab.make.lead">Each label is a new bag number. Print the sheet now and put one label on each bag.</p>
+      <label class="field"><span data-t="lab.make.location">Location</span>
+        <select id="make-location" required></select></label>
+      <label class="field"><span data-t="lab.make.count">How many</span>
+        <input id="make-count" type="number" inputmode="numeric" min="1" max="200" value="12" required></label>
+      <button class="btn wide" type="submit" data-t="lab.make.go">Make labels</button>
+    </form>
+
+    <section id="sheet-card" class="card" hidden>
+      <div class="row no-print">
+        <h2 class="grow" data-t="lab.sheet.title">Label sheet</h2>
+        <button id="print" class="btn small" type="button" data-t="lab.print">Print</button>
+      </div>
+      <p class="muted small no-print" data-t="lab.sheet.lead">A moderator scans a label to open that bag.</p>
+      <div id="sheet" class="sheet"></div>
+    </section>
+  </main>
+</div>
+<script type="module" src="/mod/labels.js"></script>
+</body>
+</html>
