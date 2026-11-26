@@ -12,6 +12,7 @@ export const TEXT = {
     'home.continue': 'Continue with bag {label}',
     'home.moderator': 'I am a moderator',
     'home.code': 'Running code:',
+    'home.install': 'Add the app to the home screen',
 
     'join.title': 'Join the bag',
     'join.lead': 'Type your name. The moderator sees it next to your phone.',
@@ -161,6 +162,7 @@ export const TEXT = {
     'home.continue': 'Nastavi sa vrećom {label}',
     'home.moderator': 'Ja sam moderator',
     'home.code': 'Verzija koda:',
+    'home.install': 'Dodaj aplikaciju na početni ekran',
 
     'join.title': 'Priključi se vreći',
     'join.lead': 'Upiši svoje ime. Moderator ga vidi pored tvog telefona.',

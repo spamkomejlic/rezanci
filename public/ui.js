@@ -56,6 +56,14 @@ export function boot() {
   applyText();
   // The operator pages get a service worker, so they open with no network. The moderator pages need the login, so they do not.
   if ('serviceWorker' in navigator && !location.pathname.startsWith('/mod')) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  // Chrome on Android can put the app on the home screen. The button shows only when the browser offers that.
+  addEventListener('beforeinstallprompt', event => {
+    const install = $('install');
+    if (!install) return;
+    event.preventDefault();
+    install.hidden = false;
+    install.onclick = () => { install.hidden = true; event.prompt(); };
+  });
   const button = $('lang');
   if (button) {
     button.textContent = lang === 'sr' ? 'English' : 'Srpski';
