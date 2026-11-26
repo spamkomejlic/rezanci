@@ -21,5 +21,11 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "rezanci", "database_id": "a48a3ac7-a8e0-4177-ae35-4fcec42a2f5f", "migrations_dir": "migrations" }
   ],
+  // Moderator login (Cloudflare Access): team address and audience tag of the application.
+  // Both are identifiers, not secrets. The Worker uses them to check each moderator token.
+  "vars": {
+    "ACCESS_TEAM": "rezanci.cloudflareaccess.com",
+    "ACCESS_AUD": "3eb62919adc682b4b8ab30369f6c047d46c99d34220f178d670bd4bef0206271"
+  },
   "observability": { "enabled": true }
 }
