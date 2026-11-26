@@ -1,4 +1,4 @@
-// Moderator screen: open a bag, show the one-time code for phones, watch the phones, close the bag.
+// Moderator screen: open a bag, show the one-time code for phones, watch the phones and their photos, close the bag.
 // Cloudflare Access guards this path. The API checks the login again on each call.
 import { $, api, boot, t, say, show, errorText } from '/ui.js';
 import { drawQr } from '/qr.js';
@@ -46,6 +46,10 @@ function render() {
   $('opened').textContent = t('mod.bag.opened', { time: new Date(session.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
   const phones = JSON.stringify(session.phones);
   if (phones !== lastPhones) { lastPhones = phones; renderPhones(); }
+  // Photo counts of the bag: the sums of its phones. The check screen (/mod/photos) shows the photos.
+  const sum = name => session.phones.reduce((n, p) => n + p[name], 0);
+  $('photos-counts').textContent = t('mod.photos.counts',
+    { v: sum('verified'), u: sum('verified') - sum('approved') - sum('rejected'), r: sum('rejected') });
   renderClose();
   // A phone used the code, or the code is old: show a new one.
   if (!code || code.phones !== session.phones.length || Date.now() >= code.until) newCode();
@@ -81,7 +85,7 @@ function renderPhones() {
   }));
 }
 
-// The close rule comes from the server: each phone Done and each photo in the archive.
+// The close rule comes from the server: each phone Done, each photo in the archive, each flagged photo decided.
 function renderClose() {
   const blocked = session.blockers.length > 0;
   $('close-lead').textContent = t(blocked ? 'mod.close.blocked' : 'mod.close.ready');

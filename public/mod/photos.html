@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
+<title>rezanci</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app wide">
+  <header class="top">
+    <a class="brand" href="/mod/"><span class="brand-mark"></span>rezanci</a>
+    <a class="chip" href="/mod/" data-t="lab.back">Back</a>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <h1 data-t="photos.title">Photos of the bag</h1>
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+    <div id="work" class="stack" hidden>
+      <section class="card tint">
+        <div id="label" class="bag-label"></div>
+        <!-- The four counts are also the filter of the grid. -->
+        <div id="filter" class="stats two">
+          <button class="stat" type="button" data-show="all"><b>0</b><span data-t="photos.all">All</span></button>
+          <button class="stat" type="button" data-show="open"><b>0</b><span data-t="photos.open">Not checked</span></button>
+          <button class="stat" type="button" data-show="flagged"><b>0</b><span data-t="photos.flagged">Flagged, no decision</span></button>
+          <button class="stat" type="button" data-show="rejected"><b>0</b><span data-t="photos.rejected">Rejected</span></button>
+        </div>
+        <button id="approve-all" class="btn soft wide" type="button" data-t="photos.approveall" hidden>Approve all not checked</button>
+      </section>
+
+      <section class="card">
+        <p class="muted small" data-t="photos.lead">Tap a photo to see it large, then approve or reject it.</p>
+        <p id="none" class="muted" data-t="photos.none" hidden>No photo of this bag is in the archive yet.</p>
+        <div id="grid" class="grid"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- Large view of one photo, over the full screen. -->
+<div id="viewer" class="viewer" role="dialog" aria-modal="true" hidden>
+  <div class="bar row">
+    <span id="view-who" class="grow"></span>
+    <span id="view-mark" class="pill" hidden></span>
+    <button id="view-close" class="chip" type="button" data-t="photos.close">Close</button>
+  </div>
+  <img id="view-img" alt="">
+  <div class="bar stack">
+    <p id="view-status" class="status bad" role="status" hidden></p>
+    <p id="view-facts" class="small"></p>
+    <div class="row">
+      <button id="view-prev" class="btn soft small grow" type="button" data-t="photos.prev">Previous</button>
+      <a id="view-full" class="btn soft small grow" target="_blank" rel="noopener" data-t="photos.full">Full size</a>
+      <button id="view-next" class="btn soft small grow" type="button" data-t="photos.next">Next</button>
+    </div>
+    <div class="row">
+      <button id="view-reject" class="btn danger grow" type="button" data-t="photos.reject">Reject</button>
+      <button id="view-approve" class="btn grow" type="button" data-t="photos.approve">Approve</button>
+    </div>
+  </div>
+</div>
+<script type="module" src="/mod/photos.js"></script>
+</body>
+</html>

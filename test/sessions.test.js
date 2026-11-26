@@ -227,6 +227,98 @@ test('photo upload: checked by the archive, verified one time, kept in its bag, 
   assert.deepEqual((await overview('TEST1')).map(b => [b.state, b.sessions, b.photos, b.missing]), [['forced', 2, 2, 0]]);
 });
 
+test('photo check: a moderator sees and decides the photos of the open bag, a flagged photo blocks the close', async () => {
+  const eve = { email: 'eve@example.com' }, fay = { email: 'fay@example.com' };
+  const join = async (moderator, name) => (await call('POST', '/api/enroll',
+    { body: { code: (await mod('POST /api/mod/enroll-code', moderator)).code, name, phone: 'phone-' + name } })).headers.get('Set-Cookie').split(';')[0];
+  const file = async size => { const bytes = crypto.getRandomValues(new Uint8Array(size)); return { bytes, sha: await sha256Hex(bytes) }; };
+  const send = (cookie, bag, f, more = {}) => call('PUT',
+    `/api/op/photo?${new URLSearchParams({ sha: f.sha, bag, w: 8160, h: 6120, ...more })}`, { body: f.bytes, cookie });
+  const small = (cookie, bag, sha, bytes) => call('PUT', `/api/op/preview?${new URLSearchParams({ sha, bag })}`, { body: bytes, cookie });
+  const photo = (moderator, sha, size) => routes['GET /api/mod/photo'](
+    { db, env, moderator, url: new URL(`https://rezanci.net/api/mod/photo?sha=${sha}&size=${size}`) });
+  const bytesOf = async answer => Buffer.from(await answer.arrayBuffer()).toString('hex');
+  const review = (moderator, body) => mod('POST /api/mod/photo/review', moderator, body);
+  const counts = async moderator => (await mod('GET /api/mod/session', moderator)).session.phones.map(p => [p.approved, p.rejected, p.flags_open]);
+
+  await mod('POST /api/mod/locations', eve, { code: 'L03', name: 'Room 3' });
+  const [bagA, bagB] = (await mod('POST /api/mod/bags', eve, { location: 'L03', count: 2 })).labels;
+  const sessionA = (await mod('POST /api/mod/session', eve, { label: bagA, material: 'torn' })).id;
+  await mod('POST /api/mod/session', fay, { label: bagB, material: 'torn' });
+  const cookie = await join(eve, 'Nina'), cookieB = await join(fay, 'Oleg');
+  const [one, two, kept, foreign, copy] = await Promise.all([3000, 3100, 3200, 3300, 400].map(file));
+  const folder = `L03/bags/${bagA.slice(4, 11)}`;
+
+  // The small copy goes into its own folder, outside the locked part of the archive, and only for the bag of the phone.
+  assert.equal((await small(undefined, bagA, one.sha, copy.bytes)).status, 401);
+  assert.equal((await small(cookie, bagB, one.sha, copy.bytes)).status, 409);
+  assert.equal((await small(cookie, bagA, 'abc', copy.bytes)).status, 400);
+  assert.equal((await small(cookie, bagA, one.sha, new Uint8Array(1024 * 1024 + 1))).status, 413);
+  assert.deepEqual(await (await small(cookie, bagA, one.sha, copy.bytes)).json(), { stored: true });
+  assert.deepEqual(await (await small(cookie, bagA, one.sha, new Uint8Array(500))).json(), { stored: true });   // the first copy stays
+  assert.equal((await archive.head(`preview/locations/${folder}/${one.sha}.jpg`)).size, 400);
+  assert.equal(await archive.head(`locations/${folder}/${one.sha}.jpg`), null);
+  // A small copy alone is not a photo of the bag: the moderator cannot read it.
+  await refused(photo(eve, one.sha, 'preview'), 404);
+
+  for (const f of [one, two]) assert.equal((await send(cookie, bagA, f)).status, 200);
+  assert.equal((await send(cookie, bagA, kept, { flag: 1 })).status, 200);
+  assert.equal((await send(cookieB, bagB, foreign)).status, 200);
+
+  // The list holds the photos of the own open bag only.
+  const list = await mod('GET /api/mod/photos', eve);
+  assert.equal(list.label, bagA);
+  assert.deepEqual(list.photos.map(p => [p.sha, p.name, p.bytes, p.flagged, p.review]).sort(),
+    [[one.sha, 'Nina', 3000, 0, null], [two.sha, 'Nina', 3100, 0, null], [kept.sha, 'Nina', 3200, 1, null]].sort());
+  assert.deepEqual((await mod('GET /api/mod/photos', fay)).photos.map(p => p.sha), [foreign.sha]);
+  await refused(mod('GET /api/mod/photos', { email: 'nobody@example.com' }), 409);
+
+  // The files: small copy and stored photo of the own bag. A photo of a different bag is "not found".
+  const preview = await photo(eve, one.sha, 'preview');
+  assert.deepEqual([preview.headers.get('Content-Type'), preview.headers.get('Cache-Control'), preview.headers.get('X-Content-Type-Options')],
+    ['image/jpeg', 'private, max-age=3600', 'nosniff']);
+  assert.equal(await bytesOf(preview), Buffer.from(copy.bytes).toString('hex'));
+  assert.equal(await bytesOf(await photo(eve, one.sha, 'full')), Buffer.from(one.bytes).toString('hex'));
+  await refused(photo(eve, two.sha, 'preview'), 404);            // this photo came with no small copy
+  await refused(photo(eve, foreign.sha, 'full'), 404);
+  await refused(photo(eve, '../' + one.sha, 'full'), 404);
+
+  // Decisions. A flagged photo with no decision blocks the close, and "approve all" does not cover it.
+  assert.deepEqual(await counts(eve), [[0, 0, 1]]);
+  assert.deepEqual((await mod('GET /api/mod/session', eve)).session.blockers.at(-1), { kind: 'review', name: 'Nina', count: 1 });
+  await refused(review(eve, { sha: one.sha, decision: 'fine' }), 400);
+  await refused(review(eve, { sha: foreign.sha, decision: 'approved' }), 404);
+  await refused(review(eve, { all: true }), 400);
+  assert.deepEqual(await review(eve, { sha: one.sha, decision: 'approved' }), { reviewed: 1, review: 'approved' });
+  assert.deepEqual(await review(eve, { all: true, until: stamp(-60_000) }), { reviewed: 0 });   // a list from before the photos
+  assert.deepEqual(await review(eve, { all: true, until: list.at }), { reviewed: 1 });
+  assert.deepEqual(await counts(eve), [[2, 0, 1]]);
+  await call('POST', '/api/op/done', { cookie, body: { done: true, queue: 0 } });
+  await refused(mod('POST /api/mod/session/close', eve, { tray_empty: true }), 409);
+  assert.deepEqual(await review(eve, { sha: kept.sha, decision: 'rejected' }), { reviewed: 1, review: 'rejected' });
+  assert.deepEqual(await counts(eve), [[2, 1, 0]]);
+  assert.deepEqual((await mod('GET /api/mod/session', eve)).session.blockers, []);
+  // A changed decision moves the counts. The photo of the other bag has no decision.
+  await review(eve, { sha: two.sha, decision: 'rejected' });
+  assert.deepEqual(await counts(eve), [[1, 2, 0]]);
+  assert.deepEqual(await counts(fay), [[0, 0, 0]]);
+
+  // The event record has one line per decision. The manifest carries the decisions. A rejected photo stays in the archive.
+  const events = (await db.prepare("SELECT actor, detail FROM events WHERE type = 'review' AND session_id = ? ORDER BY id").bind(sessionA).all()).results;
+  assert.deepEqual(events.map(e => [e.actor, JSON.parse(e.detail).decision]),
+    [['eve@example.com', 'approved'], ['eve@example.com', 'approved'], ['eve@example.com', 'rejected'], ['eve@example.com', 'rejected']]);
+  assert.deepEqual(await mod('POST /api/mod/session/close', eve, { tray_empty: true }), { closed: true, forced: false, manifest: true });
+  const manifest = await (await archive.get(`locations/${folder}/manifest-${sessionA}.json`)).json();
+  assert.deepEqual(manifest.images.map(i => [i.sha256, i.review, i.reviewed_by]).sort(),
+    [[one.sha, 'approved', 'eve@example.com'], [two.sha, 'rejected', 'eve@example.com'], [kept.sha, 'rejected', 'eve@example.com']].sort());
+  assert.deepEqual([manifest.phones[0].approved, manifest.phones[0].rejected], [1, 2]);
+  assert.equal((await archive.head(`locations/${folder}/${kept.sha}.jpg`)).size, 3200);
+  // After the close there is no open bag: no list, no file, no decision.
+  await refused(photo(eve, one.sha, 'full'), 409);
+  await refused(review(eve, { sha: one.sha, decision: 'approved' }), 409);
+  await mod('POST /api/mod/session/close', fay, { force_reason: 'End of the photo check test' });
+});
+
 test('the Worker refuses requests with no login, from a different site, or with a bad body', async () => {
   const env = { DB: db, ACCESS_TEAM: 'team.example', ACCESS_AUD: 'aud' };
   const send = (path, init) => worker.fetch(new Request('https://rezanci.net' + path, init), env);

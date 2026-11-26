@@ -20,6 +20,7 @@ let sending = false;       // one upload at a time
 let wait = 0, timer = 0;   // wait before the next try after an upload that failed
 let busy = false;          // a new photo is in the checks
 const refused = new Map(); // photos that the server refused in this visit: hash and reason
+const previewed = new Set();   // photos whose small copy went to the server in this visit
 
 function render() {
   $('label').textContent = session.label;
@@ -90,6 +91,13 @@ async function pump() {
       if (p.taken) q.set('taken', p.taken);
       if (p.quality) for (const name of ['blur', 'clipped', 'dark']) q.set(name, p.quality[name].toFixed(4));
       if (p.flag) q.set('flag', '1');
+      // The small copy for the moderator goes first, with one try. The photo never waits for it:
+      // only a missing network stops the loop here, and then the photo could not go either.
+      if (p.preview && !previewed.has(p.sha)) {
+        const small = await api('PUT', '/api/op/preview?' + new URLSearchParams({ sha: p.sha, bag: p.bag }), p.preview);
+        if (small.status === 0) { problem = errorText(small); break; }
+        previewed.add(p.sha);
+      }
       const r = await api('PUT', '/api/op/photo?' + q, p.blob);
       if (r.ok && r.data.verified === true && r.data.sha === p.sha) {
         await queue.remove(p.sha);              // the archive holds this photo: the copy on this phone can go
@@ -177,6 +185,7 @@ async function take(file) {
   delete record.hold;
   if (q) {
     record.quality = { blur: q.sharp, clipped: q.clipped, dark: q.dark };
+    if (q.preview) record.preview = q.preview;
     const usual = scoresOf(record.bag), reasons = concerns(q, usual);
     if (!reasons.length) keep.set('sharp:' + record.bag, JSON.stringify([...usual, q.sharp].slice(-15)));
     else if (await review(q, reasons)) record.flag = 1;   // kept after a warning: the moderator sees the count

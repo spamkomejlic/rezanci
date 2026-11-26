@@ -8,7 +8,7 @@ import { ERRORS, MATERIALS } from '../src/api.js';
 
 const pub = new URL('../public/', import.meta.url);
 const read = path => readFileSync(new URL(path, pub), 'utf8');
-const pages = ['index.html', 'join.html', 'capture.html', 'mod/index.html', 'mod/labels.html', 'mod/bags.html'];
+const pages = ['index.html', 'join.html', 'capture.html', 'mod/index.html', 'mod/labels.html', 'mod/bags.html', 'mod/photos.html'];
 const scriptOf = html => /<script type="module" src="\/([^"]+)"><\/script>/.exec(html)[1];
 
 test('each text that a page uses exists in English and in Serbian', () => {
@@ -22,7 +22,8 @@ test('each text that a page uses exists in English and in Serbian', () => {
   // Keys that a script builds from a server value.
   for (const material of MATERIALS) used.add('material.' + material);
   for (const ended of ['none', 'closed', 'removed']) used.add('cap.ended.' + ended);
-  for (const kind of ['not_done', 'queue', 'not_verified']) used.add('mod.block.' + kind);
+  for (const kind of ['not_done', 'queue', 'not_verified', 'review']) used.add('mod.block.' + kind);
+  for (const mark of ['approved', 'rejected', 'flagged']) used.add('photos.mark.' + mark);
   for (const state of ['new', 'open', 'closed', 'forced']) used.add('bags.state.' + state);
   // Each refusal of the API, but not the two that only a broken client can cause.
   for (const code of Object.keys(ERRORS)) if (!code.startsWith('body_')) used.add('err.' + code);

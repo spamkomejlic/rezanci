@@ -49,6 +49,8 @@ export const ERRORS = {
   photo_pixels: 'Photo: 48 MP or more.',
   wrong_bag: 'This photo is from a different bag.',
   archive: 'The archive did not confirm the photo.',
+  photo_unknown: 'Photo not found in the open bag.',
+  review: 'Review: a photo of the open bag and a decision (approved or rejected).',
 };
 export class Refusal extends Error {
   constructor(status, code, extra = {}) { super(ERRORS[code]); this.status = status; this.code = code; this.extra = extra; }
@@ -61,6 +63,7 @@ export const OPERATOR_COOKIE = '__Host-op';
 const CODE_LIFE_MS = 120_000;   // a one-time enrollment code works for 2 minutes
 const MIN_PIXELS = 48e6;        // camera specification: 48 MP or more
 const MAX_PHOTO_BYTES = 64 * 1024 * 1024;
+const MAX_PREVIEW_BYTES = 1024 * 1024;
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 const hash = text => sha256Hex(new TextEncoder().encode(text));
@@ -89,6 +92,9 @@ export function parseLabel(label) {
 // Folder of one bag in the archive. A location whose code starts with TEST is a trial location:
 // its files go under test/, where the lock rule of the archive does not apply, so they can be deleted.
 const bagFolder = (location, bag) => `${location.startsWith('TEST') ? 'test' : 'locations'}/${location}/bags/${bag}`;
+// Small copies of the photos for the check screen of the moderator. They are a help to look at, not a record:
+// they stay outside the locked part of the archive.
+const previewFolder = (location, bag) => `preview/${bagFolder(location, bag)}`;
 const hex = buffer => Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('');
 // The archive stores a file only if its name is free. A stored file never changes.
 const WRITE_ONCE = { etagDoesNotMatch: '*' };
@@ -106,16 +112,19 @@ const mustHaveOpen = async (db, moderator) => (await openSession(db, moderator))
 // Phones of one session. The counters come from the enrollment row: the database keeps them (migration 0002).
 // "silent" is the number of full minutes since the last report of the phone.
 const phonesOf = async (db, session, now) => (await db.prepare(
-  `SELECT rowid AS id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, queue_len AS queue, seen_at
+  `SELECT rowid AS id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, approved, rejected, flags_open,
+     queue_len AS queue, seen_at
    FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(session).all()).results
   .map(({ seen_at, ...p }) => ({ ...p, silent: seen_at ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(seen_at)) / 60000)) : null }));
 
 // Reasons that block a normal close. An empty list means that the close rule holds:
-// each phone is Done, no phone holds a photo, and each image record is verified.
+// each phone is Done, no phone holds a photo, each image record is verified,
+// and each photo that an operator kept after a quality warning has a decision of the moderator.
 const blockersOf = phones => [
   ...phones.filter(p => !p.removed_at && !p.done_at).map(p => ({ kind: 'not_done', name: p.name })),
   ...phones.filter(p => p.queue > 0).map(p => ({ kind: 'queue', name: p.name, count: p.queue })),
   ...phones.filter(p => p.images > p.verified).map(p => ({ kind: 'not_verified', name: p.name, count: p.images - p.verified })),
+  ...phones.filter(p => p.flags_open > 0).map(p => ({ kind: 'review', name: p.name, count: p.flags_open })),
 ];
 
 // Manifest: one JSON file in the bag folder with the session record, its phones and its image records.
@@ -127,11 +136,12 @@ async function writeManifest(env, db, id) {
       `SELECT s.id AS session, b.location_code AS location, s.bag_id AS bag, s.material, s.moderator, s.opened_at, s.closed_at, s.close_type, s.force_reason
        FROM sessions s JOIN bags b ON b.id = s.bag_id WHERE s.id = ? AND s.closed_at IS NOT NULL`).bind(id),
     db.prepare(
-      `SELECT rowid AS phone, phone_id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, queue_len AS left_on_phone
+      `SELECT rowid AS phone, phone_id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, approved, rejected, queue_len AS left_on_phone
        FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(id),
     // ponytail: all image records of the session in one read. Page the read if a session passes about 5000 photos.
     db.prepare(
-      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, i.clipped, i.dark, e.rowid AS phone
+      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, i.clipped, i.dark,
+         i.review, i.reviewed_by, i.reviewed_at, e.rowid AS phone
        FROM images i JOIN enrollments e ON e.token_hash = i.token_hash WHERE i.session_id = ? ORDER BY i.created_at, i.sha256`).bind(id),
   ])).map(r => r.results);
   if (!s) return false;
@@ -288,6 +298,54 @@ export const routes = {
     return { closed: true, forced, manifest };
   },
 
+  // Photos of the open bag that are in the archive, newest first, for the check screen. The screen polls it.
+  // "at" is the time of this list: "approve all" covers only the photos up to it.
+  'GET /api/mod/photos': async ({ db, moderator, now }) => {
+    const s = await mustHaveOpen(db, moderator.email);
+    // ponytail: all photos of the session in one read. Page the read if a session passes about 2000 photos.
+    const photos = (await db.prepare(
+      `SELECT i.sha256 AS sha, e.operator_name AS name, i.verified_at AS at, i.bytes, i.width, i.height, i.flagged, i.review
+       FROM images i JOIN enrollments e ON e.token_hash = i.token_hash
+       WHERE i.session_id = ? AND i.state = 'verified' ORDER BY i.verified_at DESC, i.sha256`).bind(s.id).all()).results;
+    return { label: bagLabel(s.location_code, s.bag_id), at: now, photos };
+  },
+
+  // One photo of the open bag of this moderator: the small copy from the phone (size=preview) or the stored file (size=full).
+  // The image record decides which file a moderator can read. A photo of a different bag gives "not found".
+  'GET /api/mod/photo': async ({ db, env, url, moderator }) => {
+    const s = await mustHaveOpen(db, moderator.email);
+    const sha = url.searchParams.get('sha') ?? '';
+    const known = /^[0-9a-f]{64}$/.test(sha)
+      && await db.prepare('SELECT 1 FROM images WHERE session_id = ? AND sha256 = ?').bind(s.id, sha).first();
+    const folder = (url.searchParams.get('size') === 'full' ? bagFolder : previewFolder)(s.location_code, s.bag_id);
+    const file = known && await env.ARCHIVE.get(`${folder}/${sha}.jpg`);
+    if (!file) refuse(404, 'photo_unknown');
+    // The browser of the moderator can keep the file for one hour. No shared cache keeps it.
+    return new Response(file.body, { headers: {
+      ...API_HEADERS, 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'image/jpeg',
+      'X-Content-Type-Options': 'nosniff', 'Content-Disposition': `inline; filename="${sha}.jpg"`,
+    } });
+  },
+
+  // Decision of the moderator: one photo ({ sha, decision }), or "approved" for each photo of the list that has
+  // no decision and no flag ({ all: true, until }). A flagged photo always needs its own decision.
+  // A rejected photo stays in the archive. The decision is in the image record, the event record and the manifest.
+  'POST /api/mod/photo/review': async ({ db, body, moderator, now }) => {
+    const s = await mustHaveOpen(db, moderator.email);
+    const set = `UPDATE images SET review = ?1, reviewed_by = ?2, reviewed_at = ?3 WHERE session_id = ?4 AND state = 'verified'`;
+    if (body.all === true) {
+      if (typeof body.until !== 'string') refuse(400, 'review');
+      const done = await db.prepare(`${set} AND review IS NULL AND flagged = 0 AND verified_at <= ?5 RETURNING sha256`)
+        .bind('approved', moderator.email, now, s.id, body.until).all();
+      return { reviewed: done.results.length };
+    }
+    if (!['approved', 'rejected'].includes(body.decision)) refuse(400, 'review');
+    const done = await db.prepare(`${set} AND sha256 = ?5 RETURNING review`)
+      .bind(body.decision, moderator.email, now, s.id, String(body.sha)).first();
+    if (!done) refuse(404, 'photo_unknown');
+    return { reviewed: 1, review: done.review };
+  },
+
   // New one-time code for the QR code on the moderator screen. Only one code is valid at a time.
   'POST /api/mod/enroll-code': async ({ db, moderator, now }) => {
     const s = await mustHaveOpen(db, moderator.email);
@@ -363,6 +421,21 @@ export const routes = {
       event(db, now, operator.session_id, `operator:${operator.name}`, done ? 'done' : 'not done'),
     ]);
     return { done };
+  },
+
+  // Small copy of a photo (about 1280 pixels wide) that the phone made, for the check screen of the moderator.
+  // It goes before the photo. The moderator sees it only if the photo with the same SHA-256 reaches this bag.
+  // The first small copy for a photo stays: a different phone of the bag cannot put its own picture in its place.
+  // ponytail: the server does not compare the small copy with the photo. The check screen has "Full size" for that.
+  'PUT /api/op/preview': async ({ request, env, url, operator }) => {
+    const sha = url.searchParams.get('sha') ?? '', bytes = Number(request.headers.get('Content-Length') ?? NaN);
+    if (!/^[0-9a-f]{64}$/.test(sha)) refuse(400, 'photo_hash');
+    if (!(Number.isInteger(bytes) && bytes >= 1 && bytes <= MAX_PREVIEW_BYTES)) refuse(bytes > MAX_PREVIEW_BYTES ? 413 : 411, 'photo_size');
+    const label = bagLabel(operator.location_code, operator.bag_id);
+    if (url.searchParams.get('bag') !== label) refuse(409, 'wrong_bag', { bag: label });
+    await env.ARCHIVE.put(`${previewFolder(operator.location_code, operator.bag_id)}/${sha}.jpg`, request.body,
+      { onlyIf: WRITE_ONCE, httpMetadata: { contentType: 'image/jpeg' } });
+    return { stored: true };
   },
 
   // Photo upload. The request body is the JPEG file. The address carries the values that the phone computed:

@@ -1,9 +1,11 @@
 // Quality numbers of one photo: sharpness and exposure. The browser decodes the photo one time.
 // This code then reads a small copy (exposure, and where the content is) and a few tiles at full size (sharpness).
+// The same decode gives the small copy that the moderator sees on the check screen.
 
 const TILE = 512;      // edge of one full-size tile, in photo pixels
 const TILES = 8;       // the tiles with the most content get a sharpness score
 const SCALE = 16;      // the small copy has 1/16 of the photo size in each direction
+const PREVIEW = 1280;  // long side of the copy for the moderator, in pixels
 
 const luma = (d, i) => (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
 
@@ -41,6 +43,7 @@ export function tileSharpness(data, size) {
 //   clipped  share of the photo that is pure white, 0 to 1
 //   dark     share of the photo that is pure black, 0 to 1
 //   crop     the best tile at full size (ImageData), to show to the operator
+//   preview  the full photo as a small JPEG file (Blob) for the moderator, or null
 // Returns null if this phone cannot decode the photo (not enough memory). The photo is valid in that case too.
 export async function measure(file) {
   let bitmap;
@@ -76,7 +79,14 @@ export async function measure(file) {
       const score = tileSharpness(tile.data, TILE);
       if (!crop || score > sharp) { sharp = score; crop = tile; }
     }
-    return { sharp, clipped: clipped / (sw * sh), dark: dark / (sw * sh), crop };
+
+    const fit = Math.min(1, PREVIEW / Math.max(bitmap.width, bitmap.height));
+    canvas.width = Math.round(bitmap.width * fit);
+    canvas.height = Math.round(bitmap.height * fit);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const preview = await new Promise(done => canvas.toBlob(done, 'image/jpeg', 0.7));
+    return { sharp, clipped: clipped / (sw * sh), dark: dark / (sw * sh), crop, preview };
   } catch {
     return null;
   } finally {
