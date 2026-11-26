@@ -160,7 +160,13 @@ function review(q, reasons) {
 // Returns true if the photo is in the queue, false if the operator removed it, or the text of the reason for a refusal.
 async function take(file, picked) {
   if (!session || session.done) return false;
-  const buf = await file.arrayBuffer();
+  let buf;
+  try { buf = await file.arrayBuffer(); } catch (err) {
+    if (!picked) throw err;
+    keep.set('chooser', 'files');                         // the photo picker gave a file that no read opens
+    chooser();
+    return t('cap.unread');
+  }
   const size = jpegSize(buf);
   if (!size) return t('cap.notjpeg');
   const mp = (size.w * size.h / 1e6).toFixed(1);
@@ -241,6 +247,11 @@ $('camera').onchange = async event => {
 
 // Photos from the gallery: each one goes through the same checks, one after the other. The last message tells
 // how many are in the queue and gives the reason for the first one that is not.
+// An input that names only image types makes Chrome on Android use the photo picker of the system. On some phones
+// that picker gives files that no read opens. After one such failure this phone uses the normal file chooser of
+// the browser: one type that is not an image keeps Chrome away from the photo picker.
+const chooser = () => { if (keep.get('chooser') === 'files') $('gallery').accept = 'image/jpeg,application/x-photo-file'; };
+chooser();
 $('add').onclick = () => $('gallery').click();
 $('gallery').onchange = async event => {
   const files = [...event.target.files], reasons = [];
