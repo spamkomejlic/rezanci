@@ -55,6 +55,16 @@
           <div class="stat"><b id="archived">0</b><span data-t="cap.archived">in the archive</span></div>
         </div>
         <p id="sync" class="status" role="status" aria-live="polite" hidden></p>
+        <!-- Some phones show their full-resolution mode only in their own camera app, not in the camera that this page starts.
+             Their photos come in through the gallery. A photo counts only if it is newer than the join of this phone. -->
+        <details id="gallery-box">
+          <summary data-t="cap.gallery.title">The camera has no 50 MP choice?</summary>
+          <div class="stack">
+            <p class="muted small" data-t="cap.gallery.lead">Take the photos in the Camera app of the phone at full resolution. Then add them here. Only photos that you took after you joined this bag are accepted.</p>
+            <input id="gallery" type="file" accept="image/jpeg" multiple hidden>
+            <button id="add" class="btn soft wide" type="button" data-t="cap.gallery.add">Add photos from the gallery</button>
+          </div>
+        </details>
       </section>
 
       <section class="card">

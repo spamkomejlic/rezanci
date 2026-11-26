@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { jpegSize, jpegClean, exifTime, sha256Hex } from '../public/jpeg.js';
+import { jpegSize, jpegClean, exifTime, localTime, sha256Hex } from '../public/jpeg.js';
 import { tileSharpness } from '../public/quality.js';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 import { isCrossSite, accessClaims } from '../src/worker.js';
@@ -75,6 +75,9 @@ test('tileSharpness is high for hard edges and low for focus blur and for motion
 test('exifTime reads the capture time and returns null with no EXIF block', () => {
   assert.equal(exifTime(hex(EXIF)), '2026:11:25 10:00:00');
   assert.equal(exifTime(hex(SOF)), null);
+  // The same time as a number, on the clock of the phone. The gallery rule compares it with the join time.
+  assert.equal(localTime(exifTime(hex(EXIF))), new Date(2026, 10, 25, 10).getTime());
+  assert.ok(Number.isNaN(localTime(null)) && Number.isNaN(localTime('2026-11-25T10:00:00')));
 });
 
 test('sha256Hex gives the known hash of empty data', async () => {

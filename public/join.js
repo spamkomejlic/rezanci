@@ -34,6 +34,7 @@ $('form').onsubmit = async event => {
   const r = await api('POST', '/api/enroll', { code, name, phone, holds });
   if (r.ok) {
     keep.set('name', name);
+    keep.set('since', String(Date.now()));   // a photo from the gallery must be newer than this moment (capture.js)
     sessionStorage.removeItem('code');
     location.replace('/capture');
     return;

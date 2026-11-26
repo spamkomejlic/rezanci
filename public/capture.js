@@ -1,7 +1,7 @@
 // Operator capture screen: take a photo, check it, hash it, save it in the phone queue, send it to the archive.
 // A photo leaves this phone only after the server confirms that the archive holds the same bytes.
 import { $, api, boot, t, say, show, errorText, keep, lastSession } from '/ui.js';
-import { jpegSize, jpegClean, exifTime, sha256Hex } from '/jpeg.js';
+import { jpegSize, jpegClean, exifTime, localTime, sha256Hex } from '/jpeg.js';
 import { measure } from '/quality.js';
 import * as queue from '/queue.js';
 import { scanButton } from '/scan.js';
@@ -19,6 +19,7 @@ let held = [];             // photos on this phone, oldest first
 let sending = false;       // one upload at a time
 let wait = 0, timer = 0;   // wait before the next try after an upload that failed
 let busy = false;          // a new photo is in the checks
+let step = '';             // "Photo 2 of 5. " in front of the messages while photos from the gallery go through the checks
 const refused = new Map(); // photos that the server refused in this visit: hash and reason
 const previewed = new Set();   // photos whose small copy went to the server in this visit
 
@@ -28,7 +29,7 @@ function render() {
   $('operator').textContent = session.name;
   $('operator').hidden = false;
   $('archived').textContent = String(session.verified);
-  $('capture').disabled = session.done || busy;
+  $('capture').disabled = $('add').disabled = session.done || busy;
   $('done-lead').textContent = t(session.done ? 'cap.done.state' : 'cap.done.lead');
   $('done').textContent = t(session.done ? 'cap.done.off' : 'cap.done.on');
   $('done').className = 'btn wide ' + (session.done ? 'ghost' : 'soft');
@@ -50,6 +51,7 @@ async function load() {
   if (r.ok) {
     session = r.data;
     keep.set('session', JSON.stringify(session));
+    if (!keep.get('since')) keep.set('since', String(Date.now()));   // a phone that joined before this value existed
     render();
     show('main', 'work');
     say(status, '');
@@ -154,17 +156,28 @@ function review(q, reasons) {
   }).finally(() => { $('review').hidden = true; });
 }
 
-async function take(file) {
-  if (!session || session.done) return;
+// Puts one photo through the checks and into the queue. "picked" is true for a photo from the gallery.
+// Returns true if the photo is in the queue, false if the operator removed it, or the text of the reason for a refusal.
+async function take(file, picked) {
+  if (!session || session.done) return false;
   const buf = await file.arrayBuffer();
   const size = jpegSize(buf);
-  if (!size) return say(shot, t('cap.notjpeg'), 'bad');
+  if (!size) return t('cap.notjpeg');
   const mp = (size.w * size.h / 1e6).toFixed(1);
-  if (size.w * size.h < MIN_PIXELS) return say(shot, t('cap.small', { mp }), 'bad');
+  if (size.w * size.h < MIN_PIXELS) {
+    $('gallery-box').open = true;                         // the way for a phone whose camera has no 50 MP choice here
+    return t('cap.small', { mp });
+  }
+  // A photo from the gallery can be of a different bag. It counts only if it is newer than the moment
+  // this phone joined the bag. With no known moment, no photo from the gallery counts.
+  if (picked) {
+    const at = localTime(exifTime(buf)) || file.lastModified;
+    if (!(at >= (Number(keep.get('since')) || Infinity))) return t('cap.old');
+  }
   // Only the picture leaves this phone. The data that the camera wrote into the file about the phone and the place
   // is removed here, before the hash: the archive never gets the file of the camera.
   const clean = jpegClean(buf);
-  if (!clean) return say(shot, t('cap.partial'), 'bad');
+  if (!clean) return t('cap.partial');
   const photo = new Blob([clean], { type: 'image/jpeg' });
   const sha = await sha256Hex(clean);                     // hash first, then one short storage transaction
   // The record keeps the bag of the photo. The server takes the photo only into that bag.
@@ -172,7 +185,7 @@ async function take(file) {
   const record = { sha, bag: session.label, blob: photo, width: size.w, height: size.h, taken: exifTime(buf), saved: Date.now(), hold: true };
   await queue.put(record);
   const saved = t('cap.saved', { mp, mb: (photo.size / 1048576).toFixed(1) });
-  say(shot, saved + ' ' + t('cap.checking'), 'good');
+  say(shot, step + saved + ' ' + t('cap.checking'), 'good');
   if (!sending) say(sync, '');                            // "all photos are in the archive" is not true now
   await refresh();
 
@@ -185,7 +198,7 @@ async function take(file) {
     keep.set('measuring', '');
     if (q) keep.set('stops', '0');
   }
-  say(shot, saved, 'good');
+  say(shot, step + saved, 'good');
   delete record.hold;
   if (q) {
     record.quality = { blur: q.sharp, clipped: q.clipped, dark: q.dark };
@@ -196,28 +209,51 @@ async function take(file) {
     else {
       await queue.remove(sha);                            // the operator takes the photo again
       say(shot, t('cap.retake'));
-      return refresh();
+      await refresh();
+      return false;
     }
   }
   await queue.put(record);
   await refresh();
   pump();
+  return true;
 }
 
 // One photo at a time goes through the checks: the decode of a 50 MP photo needs much memory.
-async function checked(file) {
+// Returns what take() returns.
+async function checked(file, picked = false) {
   busy = true;
-  $('capture').disabled = true;
-  try { await take(file); } catch (err) { say(shot, t('cap.notsaved', { why: err.message }), 'bad'); }
+  $('capture').disabled = $('add').disabled = true;
+  let result;
+  try { result = await take(file, picked); } catch (err) { result = t('cap.notsaved', { why: err.message }); }
   busy = false;
-  $('capture').disabled = !session || session.done;
+  $('capture').disabled = $('add').disabled = !session || session.done;
+  return result;
 }
 
 $('capture').onclick = () => $('camera').click();
-$('camera').onchange = event => {
+$('camera').onchange = async event => {
   const file = event.target.files[0];
   event.target.value = '';                                // the same input must fire again for the next shot
-  if (file) checked(file);
+  const result = file && await checked(file);
+  if (typeof result === 'string') say(shot, result, 'bad');
+};
+
+// Photos from the gallery: each one goes through the same checks, one after the other. The last message tells
+// how many are in the queue and gives the reason for the first one that is not.
+$('add').onclick = () => $('gallery').click();
+$('gallery').onchange = async event => {
+  const files = [...event.target.files], reasons = [];
+  event.target.value = '';
+  let added = 0;
+  for (const [i, file] of files.entries()) {
+    step = t('cap.gallery.step', { i: i + 1, n: files.length });
+    say(shot, step + t('cap.checking'));
+    const result = await checked(file, true);
+    if (result === true) added++; else if (result) reasons.push(result);
+  }
+  step = '';
+  if (files.length) say(shot, t('cap.gallery.done', { ok: added, bad: reasons.length }) + (reasons.length ? ' ' + reasons[0] : ''), reasons.length ? 'bad' : 'good');
 };
 
 $('done').onclick = async () => {

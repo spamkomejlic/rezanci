@@ -106,6 +106,12 @@ export function exifTime(buf) {
   }
 }
 
+// The capture time of exifTime() ("2026:11:26 10:15:30", clock of the phone) as milliseconds, or NaN if there is none.
+export function localTime(text) {
+  const m = /^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)$/.exec(text ?? '');
+  return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
+}
+
 // SHA-256 of the file as lower-case hex. This value is the name of the image in the archive.
 export async function sha256Hex(buf) {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
