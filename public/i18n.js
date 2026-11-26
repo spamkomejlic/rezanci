@@ -3,9 +3,9 @@
 
 export const TEXT = {
   en: {
-    'material.shredded': 'Shredded',
+    'material.shredded': 'Strips',
+    'material.crosscut': 'Small shreds',
     'material.torn': 'Torn',
-    'material.sheets': 'Whole sheets',
 
     'home.title': 'Paper capture',
     'home.lead': 'Scan the code on the moderator screen with the phone camera to join a bag.',
@@ -72,6 +72,7 @@ export const TEXT = {
     'mod.labels.link': 'Labels and locations',
     'mod.open.title': 'Open this bag?',
     'mod.open.material': 'What is in the bag?',
+    'mod.open.fixed': 'In the bag: {material}. This was set when the bag was opened the first time. It cannot change.',
     'mod.open.reason': 'Reason to open it again',
     'mod.open.go': 'Open the bag',
     'mod.open.cancel': 'Not this bag',
@@ -205,9 +206,9 @@ export const TEXT = {
   },
 
   sr: {
-    'material.shredded': 'Iseckano',
+    'material.shredded': 'Rezanci',
+    'material.crosscut': 'Sitno seckane',
     'material.torn': 'Pocepano',
-    'material.sheets': 'Celi listovi',
 
     'home.title': 'Snimanje papira',
     'home.lead': 'Skeniraj kod sa ekrana moderatora kamerom telefona da se priključiš vreći.',
@@ -274,6 +275,7 @@ export const TEXT = {
     'mod.labels.link': 'Oznake i lokacije',
     'mod.open.title': 'Otvoriti ovu vreću?',
     'mod.open.material': 'Šta je u vreći?',
+    'mod.open.fixed': 'U vreći: {material}. Ovo je određeno pri prvom otvaranju vreće. Ne može da se menja.',
     'mod.open.reason': 'Razlog za ponovno otvaranje',
     'mod.open.go': 'Otvori vreću',
     'mod.open.cancel': 'Nije ova vreća',

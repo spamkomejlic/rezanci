@@ -60,6 +60,7 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
   await refused(open(ana, wrongCheck), 400);
   await refused(open(ana, bagLabel('L01', 'B000999')), 404);
   await refused(mod('POST /api/mod/session', ana, { label: first[0], material: 'glass' }), 400);
+  await refused(mod('POST /api/mod/session', ana, { label: first[0], material: 'sheets' }), 400);   // an option of an earlier version
   assert.deepEqual(await mod('GET /api/mod/session', ana), { session: null });
   await refused(mod('POST /api/mod/enroll-code', ana), 409);
   assert.equal((await open(ana, first[0])).label, first[0]);
@@ -102,9 +103,18 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
   assert.equal(ended.status, 401);
   assert.equal((await ended.json()).ended, 'closed');          // the phone session stops at close
 
-  // Open a closed bag again: needs a written reason.
-  await refused(open(ana, first[0]), 409);
-  await open(ana, first[0], 'Two pieces were found under the table');
+  // Open a closed bag again: needs a written reason. The contents of the bag are set at its first opening:
+  // the open form gets them from the server, and a different value in a later opening changes nothing.
+  const contents = label => routes['GET /api/mod/bag']({ db, url: new URL('https://rezanci.net/api/mod/bag?label=' + label) });
+  assert.deepEqual(await contents(first[0]), { label: first[0], material: 'shredded' });
+  assert.deepEqual(await contents(first[2]), { label: first[2], material: null });     // never opened
+  await refused(contents(bagLabel('L01', 'B000999')), 404);
+  await refused(contents('nothing'), 400);
+  await assert.rejects(open(ana, first[0]), e => e.status === 409 && e.extra.needs_reason && e.extra.material === 'shredded');
+  await mod('POST /api/mod/session', ana, { label: first[0], material: 'crosscut', reason: 'Two pieces were found under the table' });
+  assert.equal((await mod('GET /api/mod/session', ana)).session.material, 'shredded');
+  assert.deepEqual((await db.prepare('SELECT material FROM sessions WHERE bag_id = ?').bind('B000001').all()).results.map(r => r.material),
+    ['shredded', 'shredded']);
 
   // Remove a phone, then force close.
   const cookie2 = (await join((await mod('POST /api/mod/enroll-code', ana)).code, 'Jovan')).headers.get('Set-Cookie').split(';')[0];
@@ -316,6 +326,30 @@ test('photo check: a moderator sees and decides the photos of the open bag, a fl
   // After the close there is no open bag: no list, no file, no decision.
   await refused(photo(eve, one.sha, 'full'), 409);
   await refused(review(eve, { sha: one.sha, decision: 'approved' }), 409);
+
+  // The bag opens again: the photos from before are on the check screen, with their decisions, and a decision can change.
+  const sessionA2 = (await mod('POST /api/mod/session', eve, { label: bagA, material: 'torn', reason: 'Check the photos again' })).id;
+  const again = await mod('GET /api/mod/session', eve);
+  assert.deepEqual([again.session.phones, again.session.photos, again.session.blockers], [[], { verified: 3, approved: 1, rejected: 2 }, []]);
+  assert.deepEqual((await mod('GET /api/mod/photos', eve)).photos.map(p => [p.sha, p.review]).sort(),
+    [[one.sha, 'approved'], [two.sha, 'rejected'], [kept.sha, 'rejected']].sort());
+  assert.equal(await bytesOf(await photo(eve, two.sha, 'full')), Buffer.from(two.bytes).toString('hex'));
+  await refused(photo(eve, foreign.sha, 'full'), 404);
+  assert.deepEqual(await review(eve, { sha: two.sha, decision: 'approved' }), { reviewed: 1, review: 'approved' });
+  // A photo that reaches the archive in both sessions shows one time, and one decision covers both records.
+  const cookie2 = await join(eve, 'Nina');
+  assert.equal((await send(cookie2, bagA, one)).status, 200);
+  assert.deepEqual((await mod('GET /api/mod/photos', eve)).photos.map(p => [p.sha, p.review]).sort(),
+    [[one.sha, null], [two.sha, 'approved'], [kept.sha, 'rejected']].sort());
+  assert.deepEqual(await review(eve, { sha: one.sha, decision: 'rejected' }), { reviewed: 1, review: 'rejected' });
+  assert.deepEqual((await db.prepare('SELECT review FROM images WHERE sha256 = ?').bind(one.sha).all()).results.map(r => r.review), ['rejected', 'rejected']);
+  // The manifest of the second session holds the photos and phones of the whole bag, with the decisions of now.
+  await mod('POST /api/mod/session/close', eve, { force_reason: 'End of the second session' });
+  const second = await (await archive.get(`locations/${folder}/manifest-${sessionA2}.json`)).json();
+  assert.deepEqual([second.format, second.session, second.phones.map(p => p.session)], [2, sessionA2, [sessionA, sessionA2]]);
+  assert.deepEqual(second.images.map(i => [i.sha256, i.session, i.review]).sort(),
+    [[one.sha, sessionA, 'rejected'], [one.sha, sessionA2, 'rejected'], [two.sha, sessionA, 'approved'], [kept.sha, sessionA, 'rejected']].sort());
+  assert.equal((await (await archive.get(`locations/${folder}/manifest-${sessionA}.json`)).json()).images.length, 3);   // the first manifest stays
   await mod('POST /api/mod/session/close', fay, { force_reason: 'End of the photo check test' });
 });
 

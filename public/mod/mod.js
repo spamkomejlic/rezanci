@@ -12,6 +12,8 @@ const bagFromAddress = () => new URLSearchParams(location.hash.slice(1)).get('ba
 
 let session = null;        // open bag of this moderator, as the server gave it
 let wanted = bagFromAddress();   // label from a scanned bag code: /mod/#bag=<label>
+let asked = null;          // label for which the page asked the server about earlier contents
+let fixed = null;          // contents of that bag from its first opening. Null: the bag was never opened.
 let code = null;           // code on the screen: { until: time on this phone, phones: phone count at issue }
 let codeBusy = false, lastPhones = '', offline = false;
 
@@ -21,7 +23,26 @@ function failed(r) {
   if (r.data.code === 'mod_login') show('main', 'login'); else say(status, errorText(r), 'bad');
   return true;
 }
-const forgetWanted = () => { wanted = null; history.replaceState(null, '', location.pathname); };
+const forgetWanted = () => { wanted = asked = fixed = null; history.replaceState(null, '', location.pathname); showFixed(); };
+
+// The contents of a bag are set one time, when it opens the first time. For a bag that was open before,
+// the form shows them with no choice and asks for the reason to open the bag again.
+function showFixed() {
+  $('material-choice').hidden = fixed !== null;
+  $('material-fixed').hidden = $('reason-field').hidden = fixed === null;
+  $('material-fixed').textContent = fixed ? t('mod.open.fixed', { material: t('material.' + fixed) }) : '';
+}
+async function lookAtWanted() {
+  if (!wanted || asked === wanted) return;
+  const label = asked = wanted;
+  fixed = null;
+  showFixed();
+  const r = await api('GET', '/api/mod/bag?label=' + encodeURIComponent(label));
+  if (label !== wanted) return;                       // the moderator went on to a different bag
+  if (r.ok) { fixed = r.data.material; showFixed(); }
+  else if (r.status === 0) asked = null;              // no network: the next look at the server tries again
+  else failed(r);                                     // not a printed label
+}
 
 async function refresh() {
   const r = await api('GET', '/api/mod/session');
@@ -35,7 +56,7 @@ async function refresh() {
 function render() {
   if (!session) {
     code = null; lastPhones = '';
-    if (wanted) { $('open-label').textContent = wanted; show('main', 'open'); } else show('main', 'idle');
+    if (wanted) { $('open-label').textContent = wanted; show('main', 'open'); lookAtWanted(); } else show('main', 'idle');
     return;
   }
   show('main', 'bag');
@@ -46,10 +67,9 @@ function render() {
   $('opened').textContent = t('mod.bag.opened', { time: new Date(session.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
   const phones = JSON.stringify(session.phones);
   if (phones !== lastPhones) { lastPhones = phones; renderPhones(); }
-  // Photo counts of the bag: the sums of its phones. The check screen (/mod/photos) shows the photos.
-  const sum = name => session.phones.reduce((n, p) => n + p[name], 0);
-  $('photos-counts').textContent = t('mod.photos.counts',
-    { v: sum('verified'), u: sum('verified') - sum('approved') - sum('rejected'), r: sum('rejected') });
+  // Photo counts of the whole bag, with its earlier openings. The check screen (/mod/photos) shows the photos.
+  const { verified, approved, rejected } = session.photos;
+  $('photos-counts').textContent = t('mod.photos.counts', { v: verified, u: verified - approved - rejected, r: rejected });
   renderClose();
   // A phone used the code, or the code is old: show a new one.
   if (!code || code.phones !== session.phones.length || Date.now() >= code.until) newCode();
@@ -118,14 +138,13 @@ function tick() {
 
 $('open').onsubmit = async event => {
   event.preventDefault();
-  const material = new FormData($('open')).get('material');
+  const material = fixed ?? new FormData($('open')).get('material');
   if (!material) return say(status, t('err.material'), 'bad');
   const r = await api('POST', '/api/mod/session', { label: wanted, material, reason: $('reason').value });
-  if (r.data.needs_reason) $('reason-field').hidden = false;
+  if (r.data.needs_reason) { fixed = r.data.material; showFixed(); }   // the server knows the bag from an earlier opening
   if (failed(r)) return;
   forgetWanted();
   $('open').reset();
-  $('reason-field').hidden = true;
   say(status, '');
   await refresh();
 };

@@ -36,11 +36,13 @@
       <h1 data-t="mod.open.title">Open this bag?</h1>
       <div id="open-label" class="bag-label"></div>
       <p class="eyebrow" data-t="mod.open.material">What is in the bag?</p>
-      <div class="seg">
-        <label><input type="radio" name="material" value="shredded"><span data-t="material.shredded">Shredded</span></label>
+      <div id="material-choice" class="seg">
+        <label><input type="radio" name="material" value="shredded"><span data-t="material.shredded">Strips</span></label>
+        <label><input type="radio" name="material" value="crosscut"><span data-t="material.crosscut">Small shreds</span></label>
         <label><input type="radio" name="material" value="torn"><span data-t="material.torn">Torn</span></label>
-        <label><input type="radio" name="material" value="sheets"><span data-t="material.sheets">Whole sheets</span></label>
       </div>
+      <!-- A bag that was open before: its contents are set and cannot change. -->
+      <p id="material-fixed" class="status" hidden></p>
       <label id="reason-field" class="field" hidden><span data-t="mod.open.reason">Reason to open it again</span>
         <textarea id="reason" maxlength="300"></textarea></label>
       <button class="btn wide" type="submit" data-t="mod.open.go">Open the bag</button>

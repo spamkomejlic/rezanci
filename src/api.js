@@ -29,7 +29,7 @@ export const ERRORS = {
   location_unknown: 'Location not found.',
   count: 'Count: 1 to 200.',
   label: 'This is not a valid bag label.',
-  material: 'Material: shredded, torn or sheets.',
+  material: 'Material: shredded, crosscut or torn.',
   bag_unknown: 'Bag not found. Only a printed label works.',
   mod_has_bag: 'You have an open bag. Close it first.',
   bag_open: 'A different moderator has this bag open.',
@@ -58,7 +58,9 @@ export class Refusal extends Error {
 const refuse = (status, code, extra) => { throw new Refusal(status, code, extra); };
 export const refusal = (status, code, extra = {}) => json({ error: ERRORS[code], code, ...extra }, status);
 
-export const MATERIALS = ['shredded', 'torn', 'sheets'];
+// Contents of a bag: "shredded" is paper in strips, "crosscut" is paper in small pieces, "torn" is paper torn by hand.
+// The list lives here only. The database has no rule for it (migration 0006).
+export const MATERIALS = ['shredded', 'crosscut', 'torn'];
 export const OPERATOR_COOKIE = '__Host-op';
 const CODE_LIFE_MS = 120_000;   // a one-time enrollment code works for 2 minutes
 const MIN_PIXELS = 48e6;        // camera specification: 48 MP or more
@@ -127,25 +129,28 @@ const blockersOf = phones => [
   ...phones.filter(p => p.flags_open > 0).map(p => ({ kind: 'review', name: p.name, count: p.flags_open })),
 ];
 
-// Manifest: one JSON file in the bag folder with the session record, its phones and its image records.
-// A reader can check the bag folder with it and needs no access to the database.
-// The session is closed at this point, so its records do not change, and a repeated write gives the same file.
+// Manifest: one JSON file in the bag folder, written when a session of the bag closes. It holds the session record,
+// and the phones and image records of the bag up to that moment: this session and each earlier session of the bag.
+// A reader can check the bag folder with the newest manifest and needs no access to the database.
+// The earlier sessions are in it because a decision of the moderator can change a photo record of an earlier session.
+const UP_TO = `(SELECT o.id FROM sessions o JOIN sessions s ON s.bag_id = o.bag_id WHERE s.id = ?1 AND o.opened_at <= s.opened_at)`;
 async function writeManifest(env, db, id) {
   const [[s], phones, images] = (await db.batch([
     db.prepare(
       `SELECT s.id AS session, b.location_code AS location, s.bag_id AS bag, s.material, s.moderator, s.opened_at, s.closed_at, s.close_type, s.force_reason
        FROM sessions s JOIN bags b ON b.id = s.bag_id WHERE s.id = ? AND s.closed_at IS NOT NULL`).bind(id),
     db.prepare(
-      `SELECT rowid AS phone, phone_id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, approved, rejected, queue_len AS left_on_phone
-       FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(id),
-    // ponytail: all image records of the session in one read. Page the read if a session passes about 5000 photos.
+      `SELECT rowid AS phone, session_id AS session, phone_id, operator_name AS name, enrolled_at, done_at, removed_at,
+         images, verified, flagged, approved, rejected, queue_len AS left_on_phone
+       FROM enrollments WHERE session_id IN ${UP_TO} ORDER BY enrolled_at, rowid`).bind(id),
+    // ponytail: all image records of the bag in one read. Page the read if a bag passes about 5000 photos.
     db.prepare(
-      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, i.clipped, i.dark,
+      `SELECT i.sha256, i.session_id AS session, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, i.clipped, i.dark,
          i.review, i.reviewed_by, i.reviewed_at, e.rowid AS phone
-       FROM images i JOIN enrollments e ON e.token_hash = i.token_hash WHERE i.session_id = ? ORDER BY i.created_at, i.sha256`).bind(id),
+       FROM images i JOIN enrollments e ON e.token_hash = i.token_hash WHERE i.session_id IN ${UP_TO} ORDER BY i.created_at, i.sha256`).bind(id),
   ])).map(r => r.results);
   if (!s) return false;
-  const file = JSON.stringify({ format: 1, label: bagLabel(s.location, s.bag), ...s, phones, images }, null, 1);
+  const file = JSON.stringify({ format: 2, label: bagLabel(s.location, s.bag), ...s, phones, images }, null, 1);
   const key = `${bagFolder(s.location, s.bag)}/manifest-${s.session}.json`;
   // A write that the archive refuses is not a failure if the file is there from an earlier try.
   await env.ARCHIVE.put(key, file, { onlyIf: WRITE_ONCE, httpMetadata: { contentType: 'application/json' } })
@@ -239,35 +244,56 @@ export const routes = {
     }) };
   },
 
+  // Contents of one bag, for the open form. They are set when the bag opens the first time and never change.
+  // "material" is null for a bag that was never opened.
+  'GET /api/mod/bag': async ({ db, url }) => {
+    const bag = parseLabel(url.searchParams.get('label'));
+    if (!bag) refuse(400, 'label');
+    const found = await db.prepare(
+      `SELECT (SELECT material FROM sessions WHERE bag_id = b.id ORDER BY opened_at LIMIT 1) AS material
+       FROM bags b WHERE b.id = ? AND b.location_code = ?`).bind(bag.bag, bag.location).first();
+    if (!found) refuse(404, 'bag_unknown');
+    return { label: bagLabel(bag.location, bag.bag), material: found.material };
+  },
+
   // Open session of this moderator with its phones, for the moderator screen. The screen polls it.
   'GET /api/mod/session': async ({ db, moderator, now }) => {
     const s = await openSession(db, moderator.email);
     if (!s) return { session: null };
     const phones = await phonesOf(db, s.id, now);
-    return { session: { id: s.id, label: bagLabel(s.location_code, s.bag_id), material: s.material, opened_at: s.opened_at, phones, blockers: blockersOf(phones) } };
+    // Photo counts of the whole bag, with each earlier session of it: the check screen shows those photos too.
+    // ponytail: the sums of the phone counters. A photo that reached the archive in two sessions counts two times.
+    const photos = await db.prepare(
+      `SELECT COALESCE(SUM(verified), 0) AS verified, COALESCE(SUM(approved), 0) AS approved, COALESCE(SUM(rejected), 0) AS rejected
+       FROM enrollments WHERE session_id IN (SELECT id FROM sessions WHERE bag_id = ?)`).bind(s.bag_id).first();
+    return { session: { id: s.id, label: bagLabel(s.location_code, s.bag_id), material: s.material, opened_at: s.opened_at, phones, photos, blockers: blockersOf(phones) } };
   },
 
   'POST /api/mod/session': async ({ db, env, body, moderator, now }) => {
     const bag = parseLabel(body.label);
     if (!bag) refuse(400, 'label');
-    if (!MATERIALS.includes(body.material)) refuse(400, 'material');
     const state = await db.prepare(
       `SELECT (SELECT COUNT(*) FROM bags WHERE id = ?1 AND location_code = ?2) AS known,
+              (SELECT material FROM sessions WHERE bag_id = ?1 ORDER BY opened_at LIMIT 1) AS material,
               (SELECT COUNT(*) FROM sessions WHERE bag_id = ?1 AND closed_at IS NULL) AS open,
               (SELECT COUNT(*) FROM sessions WHERE bag_id = ?1 AND closed_at IS NOT NULL) AS closed,
               (SELECT COUNT(*) FROM sessions WHERE moderator = ?3 AND closed_at IS NULL) AS mine`)
       .bind(bag.bag, bag.location, moderator.email).first();
     if (!state.known) refuse(404, 'bag_unknown');
+    // The contents of a bag are set when it opens the first time. A later opening takes them over:
+    // the request cannot change them.
+    const material = state.material ?? body.material;
+    if (!MATERIALS.includes(material)) refuse(400, 'material');
     if (state.mine) refuse(409, 'mod_has_bag');
     if (state.open) refuse(409, 'bag_open');
     const reason = String(body.reason ?? '').trim();
     if (state.closed && reason.length < 10)
-      refuse(409, 'reopen_reason', { needs_reason: true });
+      refuse(409, 'reopen_reason', { needs_reason: true, material });
     const id = crypto.randomUUID();
     try {
       await db.batch([
         db.prepare('INSERT INTO sessions (id, bag_id, material, moderator, opened_at) VALUES (?, ?, ?, ?, ?)')
-          .bind(id, bag.bag, body.material, moderator.email, now),
+          .bind(id, bag.bag, material, moderator.email, now),
         event(db, now, id, moderator.email, state.closed ? 'reopen' : 'open', state.closed ? { reason } : null),
       ]);
     } catch (e) {
@@ -299,24 +325,29 @@ export const routes = {
   },
 
   // Photos of the open bag that are in the archive, newest first, for the check screen. The screen polls it.
-  // "at" is the time of this list: "approve all" covers only the photos up to it.
+  // The list holds the photos of each session of the bag: after a bag opens again, the earlier photos are in it.
+  // A photo that reached the archive in two sessions shows one time, with the values of its newest record:
+  // a photo that came again has no decision, so the moderator decides it again. "at" is the time of this list:
+  // "approve all" covers only the photos up to it.
   'GET /api/mod/photos': async ({ db, moderator, now }) => {
     const s = await mustHaveOpen(db, moderator.email);
-    // ponytail: all photos of the session in one read. Page the read if a session passes about 2000 photos.
+    // ponytail: all photos of the bag in one read. Page the read if a bag passes about 2000 photos.
     const photos = (await db.prepare(
-      `SELECT i.sha256 AS sha, e.operator_name AS name, i.verified_at AS at, i.bytes, i.width, i.height, i.flagged, i.review
+      `SELECT i.sha256 AS sha, e.operator_name AS name, MAX(i.verified_at) AS at, i.bytes, i.width, i.height, i.flagged, i.review
        FROM images i JOIN enrollments e ON e.token_hash = i.token_hash
-       WHERE i.session_id = ? AND i.state = 'verified' ORDER BY i.verified_at DESC, i.sha256`).bind(s.id).all()).results;
+       WHERE i.session_id IN (SELECT id FROM sessions WHERE bag_id = ?) AND i.state = 'verified'
+       GROUP BY i.sha256 ORDER BY at DESC, sha`).bind(s.bag_id).all()).results;
     return { label: bagLabel(s.location_code, s.bag_id), at: now, photos };
   },
 
   // One photo of the open bag of this moderator: the small copy from the phone (size=preview) or the stored file (size=full).
-  // The image record decides which file a moderator can read. A photo of a different bag gives "not found".
+  // The image records of the bag decide which file a moderator can read. A photo of a different bag gives "not found".
   'GET /api/mod/photo': async ({ db, env, url, moderator }) => {
     const s = await mustHaveOpen(db, moderator.email);
     const sha = url.searchParams.get('sha') ?? '';
     const known = /^[0-9a-f]{64}$/.test(sha)
-      && await db.prepare('SELECT 1 FROM images WHERE session_id = ? AND sha256 = ?').bind(s.id, sha).first();
+      && await db.prepare('SELECT 1 FROM images WHERE sha256 = ?2 AND session_id IN (SELECT id FROM sessions WHERE bag_id = ?1) LIMIT 1')
+        .bind(s.bag_id, sha).first();
     const folder = (url.searchParams.get('size') === 'full' ? bagFolder : previewFolder)(s.location_code, s.bag_id);
     const file = known && await env.ARCHIVE.get(`${folder}/${sha}.jpg`);
     if (!file) refuse(404, 'photo_unknown');
@@ -330,20 +361,22 @@ export const routes = {
   // Decision of the moderator: one photo ({ sha, decision }), or "approved" for each photo of the list that has
   // no decision and no flag ({ all: true, until }). A flagged photo always needs its own decision.
   // A rejected photo stays in the archive. The decision is in the image record, the event record and the manifest.
+  // It covers the photos of each session of the open bag, so the moderator can decide a photo from before a reopen.
   'POST /api/mod/photo/review': async ({ db, body, moderator, now }) => {
     const s = await mustHaveOpen(db, moderator.email);
-    const set = `UPDATE images SET review = ?1, reviewed_by = ?2, reviewed_at = ?3 WHERE session_id = ?4 AND state = 'verified'`;
+    const set = `UPDATE images SET review = ?1, reviewed_by = ?2, reviewed_at = ?3
+                 WHERE state = 'verified' AND session_id IN (SELECT id FROM sessions WHERE bag_id = ?4)`;
     if (body.all === true) {
       if (typeof body.until !== 'string') refuse(400, 'review');
       const done = await db.prepare(`${set} AND review IS NULL AND flagged = 0 AND verified_at <= ?5 RETURNING sha256`)
-        .bind('approved', moderator.email, now, s.id, body.until).all();
-      return { reviewed: done.results.length };
+        .bind('approved', moderator.email, now, s.bag_id, body.until).all();
+      return { reviewed: new Set(done.results.map(r => r.sha256)).size };
     }
     if (!['approved', 'rejected'].includes(body.decision)) refuse(400, 'review');
     const done = await db.prepare(`${set} AND sha256 = ?5 RETURNING review`)
-      .bind(body.decision, moderator.email, now, s.id, String(body.sha)).first();
-    if (!done) refuse(404, 'photo_unknown');
-    return { reviewed: 1, review: done.review };
+      .bind(body.decision, moderator.email, now, s.bag_id, String(body.sha)).all();
+    if (!done.results.length) refuse(404, 'photo_unknown');
+    return { reviewed: 1, review: done.results[0].review };
   },
 
   // New one-time code for the QR code on the moderator screen. Only one code is valid at a time.

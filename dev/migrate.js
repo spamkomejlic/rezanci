@@ -16,10 +16,11 @@ export function statements(sql) {
   return found;
 }
 
+// Each file runs as one transaction, the way the live database runs a migration.
 export async function migrate(db) {
   const folder = new URL('../migrations/', import.meta.url);
   for (const file of readdirSync(folder).sort())
-    for (const statement of statements(readFileSync(new URL(file, folder), 'utf8'))) await db.prepare(statement).run();
+    await db.batch(statements(readFileSync(new URL(file, folder), 'utf8')).map(statement => db.prepare(statement)));
 }
 
 // In Node the body of a request is a stream with no known length, and the archive takes only a stream
