@@ -111,6 +111,16 @@ function openView(sha) {
   $('view-close').focus();
 }
 
+// The check is complete when no photo is left with no decision: the page goes back to the bag screen.
+// The list is read again first, so a photo that came in the meantime keeps the moderator here.
+const complete = () => photos.length > 0 && !photos.some(p => !p.review);
+async function leaveIfComplete() {
+  if (!complete()) return false;
+  await load();
+  if (complete()) location.href = '/mod/';
+  return complete();
+}
+
 function step(by) {
   const next = walk[walk.indexOf(current) + by];
   if (next) { current = next; view(); }
@@ -132,6 +142,8 @@ async function decide(decision) {
     // After the first decision for a photo, the view goes on to the next photo with no decision.
     const next = first && walk.slice(walk.indexOf(sha) + 1).find(other => !find(other)?.review);
     if (next && current === sha) current = next;
+    // Only a first decision can end the check. A changed decision keeps the moderator on the page.
+    if (first && await leaveIfComplete()) return;
   }
   render();
 }
@@ -160,6 +172,7 @@ $('approve-all').onclick = async () => {
   const r = await api('POST', '/api/mod/photo/review', { all: true, until: listed });
   if (failed(r)) return;
   changes++;
+  if (await leaveIfComplete()) return;
   await load();
   say(status, t('photos.approveall.done', { n: r.data.reviewed }), 'good');
 };
