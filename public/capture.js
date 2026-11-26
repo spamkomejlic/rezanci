@@ -96,6 +96,7 @@ async function pump() {
         await refresh();
       } else if (r.status === 401) {
         await load();                           // bag closed or phone removed: the photos stay on this phone
+        break;
       } else if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) {
         refused.set(p.sha, errorText(r));       // the server will not take this photo: go on with the next one
       } else {
@@ -161,13 +162,14 @@ async function take(file) {
   if (!sending) say(sync, '');                            // "all photos are in the archive" is not true now
   await refresh();
 
-  // A phone with little memory can stop the page during the decode. If that happened before,
-  // this phone does not measure again: its photos go to the archive with no quality numbers.
+  // A phone with little memory can stop the page during the decode. After two stops in a row,
+  // this phone does not measure: its photos go to the archive with no quality numbers.
   let q = null;
-  if (!keep.get('nomeasure')) {
+  if (Number(keep.get('stops')) < 2) {
     keep.set('measuring', '1');
     q = await measure(file);
     keep.set('measuring', '');
+    if (q) keep.set('stops', '0');
   }
   say(shot, saved, 'good');
   delete record.hold;
@@ -223,8 +225,8 @@ const look = async () => {
 
 // Ask the browser not to evict the queue under storage pressure.
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
-// The page stopped during a decode: do not measure on this phone again.
-if (keep.get('measuring')) { keep.set('nomeasure', '1'); keep.set('measuring', ''); }
+// The page stopped during a decode: count it. A decode that works sets the count back to zero.
+if (keep.get('measuring')) { keep.set('stops', String(Number(keep.get('stops')) + 1)); keep.set('measuring', ''); }
 await refresh().catch(err => say(shot, t('cap.queue', { why: err.message }), 'bad'));
 // A photo that was in the checks when the page closed has no decision of the operator: it goes as flagged.
 for (const { hold, ...p } of held.filter(p => p.hold)) await queue.put({ ...p, flag: 1 });
