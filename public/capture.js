@@ -1,6 +1,6 @@
 // Operator capture screen: take a photo, check it, hash it, save it in the phone queue, send it to the archive.
 // A photo leaves this phone only after the server confirms that the archive holds the same bytes.
-import { $, api, boot, t, say, show, errorText, keep } from '/ui.js';
+import { $, api, boot, t, say, show, errorText, keep, lastSession } from '/ui.js';
 import { jpegSize, jpegComplete, exifTime, sha256Hex } from '/jpeg.js';
 import { measure } from '/quality.js';
 import * as queue from '/queue.js';
@@ -40,22 +40,26 @@ function renderHeld() {
 
 // Asks the server for the bag of this phone and reports how many photos this phone holds.
 // The server decides: a closed bag or a removed phone stops the work on this screen.
-// With no network the screen stays as it is.
+// With no network the screen stays as it is. After a page load with no network, the bag from the last
+// contact is used: the operator can go on, and the photos wait on this phone.
 async function load() {
   const r = await api('GET', '/api/op/session?queue=' + held.length);
   if (r.ok) {
     session = r.data;
+    keep.set('session', JSON.stringify(session));
     render();
     show('main', 'work');
     say(status, '');
   } else if (r.status === 401) {
     session = null;
+    keep.set('session', '');
     $('operator').hidden = true;
     // With photos of the closed bag on this phone, the next step is that bag again, not the next bag.
     $('ended-text').textContent = (held.length && r.data.ended === 'closed' ? t('err.op_closed') : t('cap.ended.' + r.data.ended)) ?? errorText(r);
     show('main', 'ended');
     say(status, '');
   } else {
+    if (!session && (session = lastSession())) { render(); show('main', 'work'); }
     say(status, errorText(r), 'bad');
   }
   renderHeld();

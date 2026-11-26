@@ -1,7 +1,7 @@
 // Checks of the pages that need no browser: texts, element names, content security policy, vendored file.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { TEXT } from '../public/i18n.js';
 import { ERRORS, MATERIALS } from '../src/api.js';
@@ -53,6 +53,28 @@ test('no page has inline code or inline style, which the content security policy
     assert.ok(!/\sstyle\s*=|<style/i.test(html), `${page}: inline style`);
     assert.ok(!/https?:\/\//i.test(html), `${page}: address of a different site`);
   }
+});
+
+test('the service worker keeps each file that the operator pages load, and each kept file exists', () => {
+  const shell = [...read('sw.js').match(/const SHELL = \[([^\]]+)\]/)[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
+  const file = path => ({ '/': 'index.html', '/capture': 'capture.html', '/join': 'join.html' })[path] ?? path.slice(1);
+  // One missing file stops the install of the service worker, so each name must be a real file.
+  for (const path of shell) assert.ok(existsSync(new URL(file(path), pub)), `sw.js keeps "${path}", which is not a file`);
+  // Each file that an operator page needs: the page, its style sheet, its script, and each module behind the script.
+  const needed = new Set();
+  const follow = script => {
+    if (needed.has(script)) return;
+    needed.add(script);
+    for (const m of read(script.slice(1)).matchAll(/from '(\/[^']+)'/g)) follow(m[1]);
+  };
+  for (const path of ['/', '/capture', '/join']) {
+    needed.add(path);
+    const html = read(file(path));
+    follow('/' + scriptOf(html));
+    for (const m of html.matchAll(/<link rel="(?:stylesheet|manifest|icon)" href="([^"]+)"/g)) needed.add(m[1]);
+  }
+  for (const path of needed) assert.ok(shell.includes(path), `sw.js does not keep "${path}"`);
+  assert.ok(!shell.some(path => path.startsWith('/api') || path.startsWith('/mod')), 'no API call and no moderator page in the copy');
 });
 
 test('the vendored QR library is the recorded file and makes a code', async () => {

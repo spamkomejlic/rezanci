@@ -48,9 +48,14 @@ export const keep = {
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* not kept */ } },
 };
 
+// The bag of this phone from its last contact with the server, for a start with no network. Null if there is none.
+export const lastSession = () => { try { return JSON.parse(keep.get('session') || 'null'); } catch { return null; } };
+
 // Fills the texts and connects the language button. Each page calls it one time.
 export function boot() {
   applyText();
+  // The operator pages get a service worker, so they open with no network. The moderator pages need the login, so they do not.
+  if ('serviceWorker' in navigator && !location.pathname.startsWith('/mod')) navigator.serviceWorker.register('/sw.js').catch(() => {});
   const button = $('lang');
   if (button) {
     button.textContent = lang === 'sr' ? 'English' : 'Srpski';
