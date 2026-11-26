@@ -17,7 +17,7 @@ test('each text that a page uses exists in English and in Serbian', () => {
     const html = read(page);
     for (const m of html.matchAll(/data-t(?:-placeholder|-label)?="([^"]+)"/g)) used.add(m[1]);
     // In a script, each quoted word group with dots is a text key: 'cap.saved', 'mod.close.go'.
-    for (const m of (read(scriptOf(html)) + read('ui.js')).matchAll(/'([a-z]+(?:\.[a-z_]+)+)'/g)) used.add(m[1]);
+    for (const m of (read(scriptOf(html)) + read('ui.js') + read('scan.js')).matchAll(/'([a-z]+(?:\.[a-z_]+)+)'/g)) used.add(m[1]);
   }
   // Keys that a script builds from a server value.
   for (const material of MATERIALS) used.add('material.' + material);

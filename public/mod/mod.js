@@ -2,8 +2,10 @@
 // Cloudflare Access guards this path. The API checks the login again on each call.
 import { $, api, boot, t, say, show, errorText } from '/ui.js';
 import { drawQr } from '/qr.js';
+import { scanButton } from '/scan.js';
 
 boot();
+scanButton($('scan'), '/mod/', 'bag');   // a scanned label changes the address, and the page opens that bag
 const status = $('status');
 const CODE_LIFE = 115;     // seconds that one code stays on the screen. The server accepts a code for 120 seconds.
 const bagFromAddress = () => new URLSearchParams(location.hash.slice(1)).get('bag');

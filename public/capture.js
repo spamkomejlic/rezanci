@@ -4,6 +4,7 @@ import { $, api, boot, t, say, show, errorText, keep, lastSession } from '/ui.js
 import { jpegSize, jpegComplete, exifTime, sha256Hex } from '/jpeg.js';
 import { measure } from '/quality.js';
 import * as queue from '/queue.js';
+import { scanButton } from '/scan.js';
 
 const MIN_PIXELS = 48e6;   // camera specification: 48 MP or more
 // Limits of the quality warnings. They are first values: tests with the jig and real material give the final ones.
@@ -11,6 +12,7 @@ const SHARP_LIMIT = 0.6;   // warn if the sharpness is under this share of the u
 const SHARP_AFTER = 3;     // photos of this phone in this bag before the comparison starts
 const EXPOSURE_LIMIT = 0.98;   // warn if this share of the photo is pure white, or pure black
 boot();
+scanButton($('scan'), '/join', 'c');   // on the screen with no bag: scan the code of the next bag
 const status = $('status'), shot = $('shot'), sync = $('sync');
 let session = null;        // bag of this phone, as the server gave it
 let held = [];             // photos on this phone, oldest first

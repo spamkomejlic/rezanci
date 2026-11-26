@@ -1,4 +1,4 @@
-// Texts in two languages: English and Serbian (Latin script).
+// Texts in two languages: English (the default) and Serbian (Latin script).
 // A text that is missing in Serbian shows in English.
 
 export const TEXT = {
@@ -13,6 +13,13 @@ export const TEXT = {
     'home.moderator': 'I am a moderator',
     'home.code': 'Running code:',
     'home.install': 'Add the app to the home screen',
+
+    'scan.join': 'Scan the code',
+    'scan.bag': 'Scan a bag label',
+    'scan.hint': 'Point the camera at the code.',
+    'scan.other': 'This code is not from this app.',
+    'scan.failed': 'The camera did not start. Allow the camera for this page, or scan the code with the camera app of the phone.',
+    'scan.cancel': 'Cancel',
 
     'join.title': 'Join the bag',
     'join.lead': 'Type your name. The moderator sees it next to your phone.',
@@ -180,6 +187,13 @@ export const TEXT = {
     'home.code': 'Verzija koda:',
     'home.install': 'Dodaj aplikaciju na početni ekran',
 
+    'scan.join': 'Skeniraj kod',
+    'scan.bag': 'Skeniraj oznaku vreće',
+    'scan.hint': 'Usmeri kameru na kod.',
+    'scan.other': 'Ovaj kod nije iz ove aplikacije.',
+    'scan.failed': 'Kamera se nije pokrenula. Dozvoli kameru za ovu stranicu ili skeniraj kod aplikacijom kamere na telefonu.',
+    'scan.cancel': 'Otkaži',
+
     'join.title': 'Priključi se vreći',
     'join.lead': 'Upiši svoje ime. Moderator ga vidi pored tvog telefona.',
     'join.name': 'Tvoje ime',
@@ -338,9 +352,8 @@ export const TEXT = {
 // A browser can refuse storage access (private mode). The app then works with the default language.
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 
-const saved = stored('lang');
-export const lang = saved === 'sr' || saved === 'en' ? saved
-  : /^(sr|hr|bs|sh)/i.test(navigator.language || '') ? 'sr' : 'en';
+// English is the default on each phone. The language button changes it, and the phone keeps the choice.
+export const lang = stored('lang') === 'sr' ? 'sr' : 'en';
 
 // Text for a key, with {name} parts filled in. Returns undefined for an unknown key.
 export function t(key, vars = {}) {
