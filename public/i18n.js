@@ -1,4 +1,4 @@
-// Texts in two languages: English (the default) and Serbian (Latin script).
+// Texts in two languages: Serbian (Latin script, the default) and English.
 // A text that is missing in Serbian shows in English.
 
 export const TEXT = {
@@ -352,8 +352,8 @@ export const TEXT = {
 // A browser can refuse storage access (private mode). The app then works with the default language.
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 
-// English is the default on each phone. The language button changes it, and the phone keeps the choice.
-export const lang = stored('lang') === 'sr' ? 'sr' : 'en';
+// Serbian is the default on each phone. The language button changes it, and the phone keeps the choice.
+export const lang = stored('lang') === 'en' ? 'en' : 'sr';
 
 // Text for a key, with {name} parts filled in. Returns undefined for an unknown key.
 export function t(key, vars = {}) {
