@@ -1,30 +1,32 @@
 // Session logic against a real local D1 database (the same engine as production, in memory).
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { getPlatformProxy } from 'wrangler';
 import worker from '../src/worker.js';
 import { routes, bagLabel, parseLabel, Refusal } from '../src/api.js';
+import { sha256Hex } from '../public/jpeg.js';
+import { migrate, buffered } from '../dev/migrate.js';
 
-let db, dispose;
+let db, archive, env, dispose;
 before(async () => {
   const proxy = await getPlatformProxy({ persist: false });
   db = proxy.env.DB;
+  archive = buffered(proxy.env.ARCHIVE);
+  env = { DB: db, ARCHIVE: archive };
   dispose = proxy.dispose;
-  const sql = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8').replace(/--.*$/gm, '');
-  for (const statement of sql.split(';').map(s => s.trim()).filter(Boolean)) await db.prepare(statement).run();
+  await migrate(db);
 });
 after(() => dispose());
 
 const ana = { email: 'ana@example.com' }, bo = { email: 'bo@example.com' };
 const stamp = (offsetMs = 0) => new Date(Date.now() + offsetMs).toISOString();
 // A moderator endpoint, called the way worker.js calls it after the login check.
-const mod = async (route, moderator, body = {}, now = stamp()) => routes[route]({ db, moderator, body, now });
-// A public or operator endpoint, through the full Worker.
+const mod = async (route, moderator, body = {}, now = stamp()) => routes[route]({ db, env, moderator, body, now });
+// A public or operator endpoint, through the full Worker. A body that is not bytes goes as JSON.
 const call = (method, path, { body, cookie } = {}) => {
-  const text = body && JSON.stringify(body);
-  const headers = { ...(cookie && { Cookie: cookie }), ...(text && { 'Content-Type': 'application/json', 'Content-Length': String(text.length) }) };
-  return worker.fetch(new Request('https://rezanci.net' + path, { method, headers, body: text }), { DB: db });
+  const data = body instanceof Uint8Array ? body : body && new TextEncoder().encode(JSON.stringify(body));
+  const headers = { ...(cookie && { Cookie: cookie }), ...(data && { 'Content-Type': body === data ? 'image/jpeg' : 'application/json', 'Content-Length': String(data.length) }) };
+  return worker.fetch(new Request('https://rezanci.net' + path, { method, headers, body: data }), env);
 };
 const refused = (promise, status) => assert.rejects(promise, e => e instanceof Refusal && e.status === status);
 
@@ -83,7 +85,7 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
 
   // Operator phone session.
   assert.deepEqual(await (await call('GET', '/api/op/session', { cookie })).json(),
-    { label: first[0], material: 'shredded', name: 'Mira', done: false });
+    { label: first[0], material: 'shredded', name: 'Mira', done: false, verified: 0 });
   assert.equal((await call('GET', '/api/op/session')).status, 401);
   assert.equal((await call('GET', '/api/op/session', { cookie: '__Host-op=' + 'A'.repeat(43) })).status, 401);
 
@@ -95,7 +97,7 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
   await refused(mod('POST /api/mod/session/close', ana, { tray_empty: true }), 409);
   assert.deepEqual(await (await call('POST', '/api/op/done', { cookie, body: { done: true } })).json(), { done: true });
   await refused(mod('POST /api/mod/session/close', ana, {}), 400);
-  assert.deepEqual(await mod('POST /api/mod/session/close', ana, { tray_empty: true }), { closed: true, forced: false });
+  assert.deepEqual(await mod('POST /api/mod/session/close', ana, { tray_empty: true }), { closed: true, forced: false, manifest: true });
   const ended = await call('GET', '/api/op/session', { cookie });
   assert.equal(ended.status, 401);
   assert.equal((await ended.json()).ended, 'closed');          // the phone session stops at close
@@ -112,11 +114,96 @@ test('session flow: labels, open, enroll a phone, done, close, open again, remov
   assert.equal((await (await call('GET', '/api/op/session', { cookie: cookie2 })).json()).ended, 'removed');
   await refused(mod('POST /api/mod/phone/remove', ana, { id: state.phones[0].id }), 404);
   await refused(mod('POST /api/mod/session/close', ana, { force_reason: 'short' }), 400);
-  assert.deepEqual(await mod('POST /api/mod/session/close', ana, { force_reason: 'Fire alarm, room cleared' }), { closed: true, forced: true });
+  assert.deepEqual(await mod('POST /api/mod/session/close', ana, { force_reason: 'Fire alarm, room cleared' }), { closed: true, forced: true, manifest: true });
 
   // The event record holds each action in order.
   const events = (await db.prepare('SELECT type FROM events ORDER BY id').all()).results.map(r => r.type);
   assert.deepEqual(events, ['location', 'labels', 'labels', 'open', 'open', 'enroll', 'done', 'close', 'reopen', 'enroll', 'remove', 'force close']);
+});
+
+test('photo upload: checked by the archive, verified one time, kept in its bag, listed in the manifest', async () => {
+  const cy = { email: 'cy@example.com' }, dee = { email: 'dee@example.com' };
+  const open = (moderator, label) => mod('POST /api/mod/session', moderator, { label, material: 'torn' });
+  const join = async (moderator, extra = {}) => call('POST', '/api/enroll',
+    { body: { code: (await mod('POST /api/mod/enroll-code', moderator)).code, name: 'Lena', phone: 'phone-0002', ...extra } });
+  const cookieOf = answer => answer.headers.get('Set-Cookie').split(';')[0];
+  const phones = async moderator => (await mod('GET /api/mod/session', moderator)).session.phones;
+  const photo = crypto.getRandomValues(new Uint8Array(3000)), sha = await sha256Hex(photo);
+  const send = (cookie, bag, { bytes = photo, hash = sha, w = 8160, h = 6120, left = 0 } = {}) => call('PUT',
+    `/api/op/photo?${new URLSearchParams({ sha: hash, bag, w, h, left, taken: '2026:11:26 10:00:00' })}`, { body: bytes, cookie });
+
+  await mod('POST /api/mod/locations', cy, { code: 'L02', name: 'Room 2' });
+  const [bagA, bagB] = (await mod('POST /api/mod/bags', cy, { location: 'L02', count: 2 })).labels;
+  const sessionA = (await open(cy, bagA)).id;
+  const cookie = cookieOf(await join(cy));
+  const key = `locations/L02/bags/${bagA.slice(4, 11)}/${sha}.jpg`;
+
+  // Refused before any write: no session, bad values, the label of a different bag.
+  assert.equal((await send(undefined, bagA)).status, 401);
+  assert.equal((await send(cookie, bagA, { hash: 'abc' })).status, 400);
+  assert.equal((await send(cookie, bagA, { w: 4080, h: 3060 })).status, 400);      // 12 MP
+  const wrongBag = await send(cookie, bagB);
+  assert.equal(wrongBag.status, 409);
+  assert.equal((await wrongBag.json()).code, 'wrong_bag');
+  assert.equal(await archive.head(key), null);
+
+  // Bytes that do not match the SHA-256: the archive stores nothing, the record stays "pending" and blocks the close.
+  const damaged = await send(cookie, bagA, { bytes: photo.map(b => b ^ 1) });
+  assert.equal(damaged.status, 502);
+  assert.equal(await archive.head(key), null);
+  let state = (await mod('GET /api/mod/session', cy)).session;
+  assert.deepEqual([state.phones[0].images, state.phones[0].verified], [1, 0]);
+  assert.deepEqual(state.blockers, [{ kind: 'not_done', name: 'Lena' }, { kind: 'not_verified', name: 'Lena', count: 1 }]);
+
+  // The right bytes: stored, read back, verified. A repeated upload gives the same answer and counts one time.
+  for (let i = 0; i < 2; i++) assert.deepEqual(await (await send(cookie, bagA, { left: 2 })).json(), { verified: true, sha, count: 1 });
+  const stored = await archive.head(key);
+  assert.equal(stored.size, photo.length);
+  assert.equal(Buffer.from(stored.checksums.sha256).toString('hex'), sha);
+  const [phone] = await phones(cy);
+  assert.deepEqual([phone.images, phone.verified, phone.queue, phone.silent], [1, 1, 2, 0]);
+  assert.equal((await (await call('GET', '/api/op/session', { cookie })).json()).verified, 1);
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'verify' AND session_id = ?").bind(sessionA).first()).n, 1);
+
+  // The phone reports its queue. Photos on a phone block the close.
+  await call('GET', '/api/op/session?queue=1', { cookie });
+  assert.deepEqual(await (await call('POST', '/api/op/done', { cookie, body: { done: true, queue: 1 } })).json(), { done: true });
+  state = (await mod('GET /api/mod/session', cy)).session;
+  assert.deepEqual(state.blockers, [{ kind: 'queue', name: 'Lena', count: 1 }]);
+  await refused(mod('POST /api/mod/session/close', cy, { tray_empty: true }), 409);
+
+  // A phone that holds photos of bag A cannot join bag B. The refusal does not use up the code.
+  await open(dee, bagB);
+  const { code } = await mod('POST /api/mod/enroll-code', dee);
+  const held = await call('POST', '/api/enroll', { body: { code, name: 'Lena', phone: 'phone-0002', holds: bagA } });
+  assert.equal(held.status, 409);
+  assert.deepEqual([(await held.json()).code, (await call('POST', '/api/enroll', { body: { code, name: 'Vuk', phone: 'phone-0003', holds: bagB } })).status],
+    ['phone_holds', 200]);
+
+  // The same phone joins bag A again: the new session takes over its queue report.
+  const again = cookieOf(await join(cy, { holds: bagA }));
+  await call('POST', '/api/op/done', { cookie: again, body: { done: true, queue: 0 } });
+  assert.deepEqual((await phones(cy)).map(p => p.queue), [0, 0]);
+
+  // Close: the manifest in the bag folder lists the session, the phones and the image records.
+  assert.deepEqual(await mod('POST /api/mod/session/close', cy, { tray_empty: true }), { closed: true, forced: false, manifest: true });
+  const manifest = await (await archive.get(`locations/L02/bags/${bagA.slice(4, 11)}/manifest-${sessionA}.json`)).json();
+  assert.deepEqual([manifest.label, manifest.session, manifest.close_type, manifest.phones.length], [bagA, sessionA, 'normal', 2]);
+  assert.deepEqual(manifest.images.map(i => [i.sha256, i.bytes, i.width, i.state, i.captured_at]), [[sha, 3000, 8160, 'verified', '2026:11:26 10:00:00']]);
+  assert.equal((await send(cookie, bagA)).status, 401);          // a closed bag takes no photo
+
+  // A closed session with no manifest gets its file when the next bag opens.
+  await db.prepare('UPDATE sessions SET manifest_at = NULL WHERE id = ?').bind(sessionA).run();
+  await mod('POST /api/mod/session/close', dee, { force_reason: 'End of the upload test' });
+
+  // Trial location: its photos go under test/, outside the locked part of the archive.
+  await mod('POST /api/mod/locations', cy, { code: 'TEST1', name: 'Trial' });
+  const [trial] = (await mod('POST /api/mod/bags', cy, { location: 'TEST1', count: 1 })).labels;
+  await open(cy, trial);
+  assert.ok((await db.prepare('SELECT manifest_at FROM sessions WHERE id = ?').bind(sessionA).first()).manifest_at);
+  assert.equal((await send(cookieOf(await join(cy)), trial)).status, 200);
+  assert.equal((await archive.head(`test/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`)).size, 3000);
+  assert.equal(await archive.head(`locations/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`), null);
 });
 
 test('the Worker refuses requests with no login, from a different site, or with a bad body', async () => {

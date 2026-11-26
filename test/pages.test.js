@@ -22,7 +22,7 @@ test('each text that a page uses exists in English and in Serbian', () => {
   // Keys that a script builds from a server value.
   for (const material of MATERIALS) used.add('material.' + material);
   for (const ended of ['none', 'closed', 'removed']) used.add('cap.ended.' + ended);
-  for (const kind of ['not_done', 'not_verified']) used.add('mod.block.' + kind);
+  for (const kind of ['not_done', 'queue', 'not_verified']) used.add('mod.block.' + kind);
   // Each refusal of the API, but not the two that only a broken client can cause.
   for (const code of Object.keys(ERRORS)) if (!code.startsWith('body_')) used.add('err.' + code);
   used.add('err.offline');

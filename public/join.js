@@ -1,5 +1,6 @@
 // Operator join page. The phone opens it from the QR code on the moderator screen: /join#c=<one-time code>.
 import { $, api, boot, t, say, errorText, keep } from '/ui.js';
+import * as queue from '/queue.js';
 
 boot();
 const status = $('status');
@@ -28,7 +29,9 @@ $('form').onsubmit = async event => {
   if (!phone) keep.set('phone', phone = crypto.randomUUID());
   $('go').disabled = true;
   say(status, t('join.working'));
-  const r = await api('POST', '/api/enroll', { code, name, phone });
+  // Photos on this phone that are not in the archive belong to one bag. The server lets this phone join only that bag.
+  const holds = (await queue.all().catch(() => [])).find(p => p.bag)?.bag;
+  const r = await api('POST', '/api/enroll', { code, name, phone, holds });
   if (r.ok) {
     keep.set('name', name);
     sessionStorage.removeItem('code');

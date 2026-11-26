@@ -5,14 +5,17 @@ export { t };
 export const $ = id => document.getElementById(id);
 
 // One API call. It never throws:
-// - no network gives status 0 and the code "offline",
+// - no network, or no answer in time, gives status 0 and the code "offline",
 // - a redirect (the moderator login ended) gives status 302 and the code "mod_login".
+// A body that is a file (a photo) goes as it is. Each other body goes as JSON.
 export async function api(method, path, body) {
+  const file = body instanceof Blob;
   try {
     const r = await fetch(path, {
       method, redirect: 'manual',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: body ? { 'Content-Type': file ? 'image/jpeg' : 'application/json' } : undefined,
+      body: file ? body : body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(file ? 300000 : 20000),   // a photo of 10 MB on a slow network needs minutes
     });
     if (r.type === 'opaqueredirect') return { ok: false, status: 302, data: { code: 'mod_login' } };
     const data = await r.json().catch(() => ({}));

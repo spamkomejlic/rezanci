@@ -43,6 +43,12 @@ export const ERRORS = {
   code: 'This code is not valid. Scan the code on the moderator screen again.',
   name: 'Name: 1 to 40 characters.',
   phone_id: 'Phone ID is not valid.',
+  phone_holds: 'This phone holds photos of a different bag. Join that bag first.',
+  photo_hash: 'Photo: the SHA-256 is not valid.',
+  photo_size: 'Photo: a file of 1 byte to 64 MB, with a length header.',
+  photo_pixels: 'Photo: 48 MP or more.',
+  wrong_bag: 'This photo is from a different bag.',
+  archive: 'The archive did not confirm the photo.',
 };
 export class Refusal extends Error {
   constructor(status, code, extra = {}) { super(ERRORS[code]); this.status = status; this.code = code; this.extra = extra; }
@@ -53,6 +59,8 @@ export const refusal = (status, code, extra = {}) => json({ error: ERRORS[code],
 export const MATERIALS = ['shredded', 'torn', 'sheets'];
 export const OPERATOR_COOKIE = '__Host-op';
 const CODE_LIFE_MS = 120_000;   // a one-time enrollment code works for 2 minutes
+const MIN_PIXELS = 48e6;        // camera specification: 48 MP or more
+const MAX_PHOTO_BYTES = 64 * 1024 * 1024;
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 const hash = text => sha256Hex(new TextEncoder().encode(text));
@@ -78,6 +86,13 @@ export function parseLabel(label) {
   return m && checkChar(m[1] + m[2]) === m[3] ? { location: m[1], bag: m[2] } : null;
 }
 
+// Folder of one bag in the archive. A location whose code starts with TEST is a trial location:
+// its files go under test/, where the lock rule of the archive does not apply, so they can be deleted.
+const bagFolder = (location, bag) => `${location.startsWith('TEST') ? 'test' : 'locations'}/${location}/bags/${bag}`;
+const hex = buffer => Array.from(new Uint8Array(buffer), b => b.toString(16).padStart(2, '0')).join('');
+// The archive stores a file only if its name is free. A stored file never changes.
+const WRITE_ONCE = { etagDoesNotMatch: '*' };
+
 // One line in the append-only event record.
 const event = (db, at, session, actor, type, detail = null) =>
   db.prepare('INSERT INTO events (at, session_id, actor, type, detail) VALUES (?, ?, ?, ?, ?)')
@@ -88,24 +103,55 @@ const openSession = (db, moderator) => db.prepare(
    FROM sessions s JOIN bags b ON b.id = s.bag_id WHERE s.moderator = ? AND s.closed_at IS NULL`).bind(moderator).first();
 const mustHaveOpen = async (db, moderator) => (await openSession(db, moderator)) ?? refuse(409, 'no_bag');
 
-const phonesOf = async (db, session) => (await db.prepare(
-  `SELECT e.rowid AS id, e.operator_name AS name, e.enrolled_at, e.done_at, e.removed_at,
-     COUNT(i.sha256) AS images, COALESCE(SUM(i.state = 'verified'), 0) AS verified, COALESCE(SUM(i.flagged), 0) AS flagged
-   FROM enrollments e LEFT JOIN images i ON i.token_hash = e.token_hash
-   WHERE e.session_id = ? GROUP BY e.token_hash ORDER BY e.enrolled_at, e.rowid`).bind(session).all()).results;
+// Phones of one session. The counters come from the enrollment row: the database keeps them (migration 0002).
+// "silent" is the number of full minutes since the last report of the phone.
+const phonesOf = async (db, session, now) => (await db.prepare(
+  `SELECT rowid AS id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, queue_len AS queue, seen_at
+   FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(session).all()).results
+  .map(({ seen_at, ...p }) => ({ ...p, silent: seen_at ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(seen_at)) / 60000)) : null }));
 
 // Reasons that block a normal close. An empty list means that the close rule holds:
-// each phone is Done and each image record is verified.
+// each phone is Done, no phone holds a photo, and each image record is verified.
 const blockersOf = phones => [
   ...phones.filter(p => !p.removed_at && !p.done_at).map(p => ({ kind: 'not_done', name: p.name })),
+  ...phones.filter(p => p.queue > 0).map(p => ({ kind: 'queue', name: p.name, count: p.queue })),
   ...phones.filter(p => p.images > p.verified).map(p => ({ kind: 'not_verified', name: p.name, count: p.images - p.verified })),
 ];
+
+// Manifest: one JSON file in the bag folder with the session record, its phones and its image records.
+// A reader can check the bag folder with it and needs no access to the database.
+// The session is closed at this point, so its records do not change, and a repeated write gives the same file.
+async function writeManifest(env, db, id) {
+  const [[s], phones, images] = (await db.batch([
+    db.prepare(
+      `SELECT s.id AS session, b.location_code AS location, s.bag_id AS bag, s.material, s.moderator, s.opened_at, s.closed_at, s.close_type, s.force_reason
+       FROM sessions s JOIN bags b ON b.id = s.bag_id WHERE s.id = ? AND s.closed_at IS NOT NULL`).bind(id),
+    db.prepare(
+      `SELECT rowid AS phone, phone_id, operator_name AS name, enrolled_at, done_at, removed_at, images, verified, flagged, queue_len AS left_on_phone
+       FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(id),
+    // ponytail: all image records of the session in one read. Page the read if a session passes about 5000 photos.
+    db.prepare(
+      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, e.rowid AS phone
+       FROM images i JOIN enrollments e ON e.token_hash = i.token_hash WHERE i.session_id = ? ORDER BY i.created_at, i.sha256`).bind(id),
+  ])).map(r => r.results);
+  if (!s) return false;
+  const file = JSON.stringify({ format: 1, label: bagLabel(s.location, s.bag), ...s, phones, images }, null, 1);
+  const key = `${bagFolder(s.location, s.bag)}/manifest-${s.session}.json`;
+  // A write that the archive refuses is not a failure if the file is there from an earlier try.
+  await env.ARCHIVE.put(key, file, { onlyIf: WRITE_ONCE, httpMetadata: { contentType: 'application/json' } })
+    .catch(async e => { if (!await env.ARCHIVE.head(key)) throw e; });
+  await db.prepare('UPDATE sessions SET manifest_at = ? WHERE id = ?').bind(new Date().toISOString(), id).run();
+  return true;
+}
+
+const reportQueue = (db, operator, queue, now) =>
+  db.prepare('UPDATE enrollments SET queue_len = ?, seen_at = ? WHERE token_hash = ?').bind(queue, now, operator.token_hash);
 
 // Session of the operator phone that sent the request, from its cookie. Null if there is none.
 export async function operatorFor(request, db) {
   const m = new RegExp(`(?:^|;\\s*)${OPERATOR_COOKIE}=([A-Za-z0-9_-]{43})(?:;|$)`).exec(request.headers.get('Cookie') ?? '');
   return m && db.prepare(
-    `SELECT e.token_hash, e.session_id, e.operator_name AS name, e.done_at, e.removed_at,
+    `SELECT e.token_hash, e.session_id, e.operator_name AS name, e.done_at, e.removed_at, e.verified,
        s.closed_at, s.material, s.bag_id, b.location_code
      FROM enrollments e JOIN sessions s ON s.id = e.session_id JOIN bags b ON b.id = s.bag_id
      WHERE e.token_hash = ?`).bind(await hash(m[1])).first();
@@ -149,14 +195,14 @@ export const routes = {
   },
 
   // Open session of this moderator with its phones, for the moderator screen. The screen polls it.
-  'GET /api/mod/session': async ({ db, moderator }) => {
+  'GET /api/mod/session': async ({ db, moderator, now }) => {
     const s = await openSession(db, moderator.email);
     if (!s) return { session: null };
-    const phones = await phonesOf(db, s.id);
+    const phones = await phonesOf(db, s.id, now);
     return { session: { id: s.id, label: bagLabel(s.location_code, s.bag_id), material: s.material, opened_at: s.opened_at, phones, blockers: blockersOf(phones) } };
   },
 
-  'POST /api/mod/session': async ({ db, body, moderator, now }) => {
+  'POST /api/mod/session': async ({ db, env, body, moderator, now }) => {
     const bag = parseLabel(body.label);
     if (!bag) refuse(400, 'label');
     if (!MATERIALS.includes(body.material)) refuse(400, 'material');
@@ -184,23 +230,27 @@ export const routes = {
       if (/constraint/i.test(e.message)) refuse(409, 'open_race');
       throw e;
     }
+    // A close whose manifest write failed left a closed session with no manifest file. Write it now.
+    for (const old of (await db.prepare('SELECT id FROM sessions WHERE closed_at IS NOT NULL AND manifest_at IS NULL LIMIT 2').all()).results)
+      await writeManifest(env, db, old.id).catch(e => console.error('manifest', old.id, e));
     return { id, label: bagLabel(bag.location, bag.bag) };
   },
 
-  'POST /api/mod/session/close': async ({ db, body, moderator, now }) => {
+  'POST /api/mod/session/close': async ({ db, env, body, moderator, now }) => {
     const s = await mustHaveOpen(db, moderator.email);
-    const blockers = blockersOf(await phonesOf(db, s.id));
+    const blockers = blockersOf(await phonesOf(db, s.id, now));
     const reason = String(body.force_reason ?? '').trim(), forced = reason !== '';
     if (forced && reason.length < 10) refuse(400, 'force_reason');
     if (!forced && blockers.length) refuse(409, 'blocked', { blockers });
     if (!forced && body.tray_empty !== true) refuse(400, 'tray');
-    // ponytail: no manifest file yet. It comes with the upload step, when image records exist.
     await db.batch([
       db.prepare('UPDATE sessions SET closed_at = ?, close_type = ?, force_reason = ? WHERE id = ? AND closed_at IS NULL')
         .bind(now, forced ? 'forced' : 'normal', forced ? reason : null, s.id),
       event(db, now, s.id, moderator.email, forced ? 'force close' : 'close', forced ? { reason, blockers } : null),
     ]);
-    return { closed: true, forced };
+    // The close is final at this point. A manifest write that fails does not undo it: the next open writes the file.
+    const manifest = await writeManifest(env, db, s.id).catch(e => { console.error('manifest', s.id, e); return false; });
+    return { closed: true, forced, manifest };
   },
 
   // New one-time code for the QR code on the moderator screen. Only one code is valid at a time.
@@ -232,6 +282,15 @@ export const routes = {
     if (!/^[A-Za-z0-9_-]{22}$/.test(code)) refuse(403, 'code');
     if (!name || name.length > 40) refuse(400, 'name');
     if (!/^[A-Za-z0-9-]{8,64}$/.test(phone)) refuse(400, 'phone_id');
+    // A phone that holds photos of one bag must not join a different bag: its photos could not reach their bag.
+    // The phone names the bag of its photos. This check does not use up the code.
+    if (body.holds !== undefined) {
+      const target = await db.prepare(
+        `SELECT b.location_code, s.bag_id FROM enroll_codes c JOIN sessions s ON s.id = c.session_id JOIN bags b ON b.id = s.bag_id
+         WHERE c.code_hash = ?`).bind(await hash(code)).first();
+      if (target && bagLabel(target.location_code, target.bag_id) !== body.holds)
+        refuse(409, 'phone_holds', { bag: String(body.holds).slice(0, 20) });
+    }
     // One statement uses up the code. If two phones send the same code, only the first gets a session.
     const used = await db.prepare(
       `UPDATE enroll_codes SET used_at = ?1 WHERE code_hash = ?2 AND used_at IS NULL AND expires_at > ?1
@@ -241,6 +300,8 @@ export const routes = {
     // The phone keeps the token in a cookie that page code cannot read. The database keeps only its hash.
     const token = randomToken(32);
     await db.batch([
+      // The same phone joins this session again: its new session reports the photos that it holds.
+      db.prepare('UPDATE enrollments SET queue_len = 0 WHERE session_id = ? AND phone_id = ?').bind(used.session_id, phone),
       db.prepare('INSERT INTO enrollments (token_hash, session_id, phone_id, operator_name, enrolled_at) VALUES (?, ?, ?, ?, ?)')
         .bind(await hash(token), used.session_id, phone, name, now),
       event(db, now, used.session_id, `operator:${name}`, 'enroll', { phone }),
@@ -248,18 +309,71 @@ export const routes = {
     return json({ enrolled: true }, 200, { 'Set-Cookie': `${OPERATOR_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=86400` });
   },
 
-  'GET /api/op/session': ({ operator }) => ({
-    label: bagLabel(operator.location_code, operator.bag_id), material: operator.material,
-    name: operator.name, done: operator.done_at !== null,
-  }),
+  // The capture screen polls this. With "queue" the phone reports how many photos it holds:
+  // the moderator screen shows the number, and the close rule uses it.
+  'GET /api/op/session': async ({ db, url, operator, now }) => {
+    const queue = Number(url.searchParams.get('queue') ?? NaN);
+    if (Number.isInteger(queue) && queue >= 0) await reportQueue(db, operator, queue, now).run();
+    return {
+      label: bagLabel(operator.location_code, operator.bag_id), material: operator.material,
+      name: operator.name, done: operator.done_at !== null, verified: operator.verified,
+    };
+  },
 
   'POST /api/op/done': async ({ db, body, operator, now }) => {
     const done = body.done === true;
     await db.batch([
       db.prepare('UPDATE enrollments SET done_at = ? WHERE token_hash = ?').bind(done ? now : null, operator.token_hash),
+      ...(Number.isInteger(body.queue) && body.queue >= 0 ? [reportQueue(db, operator, body.queue, now)] : []),
       event(db, now, operator.session_id, `operator:${operator.name}`, done ? 'done' : 'not done'),
     ]);
     return { done };
+  },
+
+  // Photo upload. The request body is the JPEG file. The address carries the values that the phone computed:
+  // sha (SHA-256 of the file), bag (label of the bag of this photo), w and h (pixel size), taken (capture time),
+  // left (photos that stay on the phone after this one).
+  // The archive checks the body against the SHA-256 and refuses a body that differs. It never overwrites a file.
+  // Then the Worker reads the stored file data back and compares it. Only after that the photo is "verified",
+  // and only that answer lets the phone delete its copy.
+  'PUT /api/op/photo': async ({ request, env, url, db, operator, now }) => {
+    const q = url.searchParams, sha = q.get('sha') ?? '';
+    const bytes = Number(request.headers.get('Content-Length') ?? NaN);
+    const width = Number(q.get('w')), height = Number(q.get('h')), left = Number(q.get('left') ?? 0);
+    const taken = /^\d{4}:\d\d:\d\d \d\d:\d\d:\d\d$/.test(q.get('taken') ?? '') ? q.get('taken') : null;
+    if (!/^[0-9a-f]{64}$/.test(sha)) refuse(400, 'photo_hash');
+    if (!(Number.isInteger(bytes) && bytes >= 1 && bytes <= MAX_PHOTO_BYTES)) refuse(bytes > MAX_PHOTO_BYTES ? 413 : 411, 'photo_size');
+    // ponytail: the pixel size comes from the phone. The Worker does not parse the JPEG header of the stream.
+    if (!(Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0 && width < 65536 && height < 65536
+      && width * height >= MIN_PIXELS)) refuse(400, 'photo_pixels');
+    // A photo goes only into the bag in which it was taken. A phone that joined bag B cannot put a photo of bag A into B.
+    const label = bagLabel(operator.location_code, operator.bag_id);
+    if (q.get('bag') !== label) refuse(409, 'wrong_bag', { bag: label });
+
+    await db.prepare(
+      `INSERT OR IGNORE INTO images (session_id, sha256, token_hash, bytes, width, height, captured_at, state, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(operator.session_id, sha, operator.token_hash, bytes, width, height, taken, now).run();
+
+    // A repeated upload of the same file finds the name in use and stores nothing.
+    // The answer of the write does not decide: the read below does, for a new file and for a repeated one.
+    const key = `${bagFolder(operator.location_code, operator.bag_id)}/${sha}.jpg`;
+    await env.ARCHIVE.put(key, request.body, { sha256: sha, onlyIf: WRITE_ONCE, httpMetadata: { contentType: 'image/jpeg' } })
+      .catch(e => console.error('archive write', key, e));
+    const stored = await env.ARCHIVE.head(key).catch(e => console.error('archive read', key, e));
+    if (!stored || stored.size !== bytes || !stored.checksums.sha256 || hex(stored.checksums.sha256) !== sha) refuse(502, 'archive');
+
+    // The record changes only while the session is open, so the manifest of a closed session stays complete.
+    const [, , state] = await db.batch([
+      db.prepare(
+        `UPDATE images SET state = 'verified', verified_at = ?1 WHERE session_id = ?2 AND sha256 = ?3 AND state <> 'verified'
+           AND EXISTS (SELECT 1 FROM sessions WHERE id = ?2 AND closed_at IS NULL)`).bind(now, operator.session_id, sha),
+      reportQueue(db, operator, Number.isInteger(left) && left >= 0 ? left : 0, now),
+      db.prepare('SELECT state, (SELECT verified FROM enrollments WHERE token_hash = ?3) AS count FROM images WHERE session_id = ?1 AND sha256 = ?2')
+        .bind(operator.session_id, sha, operator.token_hash),
+    ]);
+    if (state.results[0]?.state !== 'verified') refuse(401, 'op_closed', { ended: 'closed' });
+    // "count": photos of this phone in the archive, for the count on its screen.
+    return { verified: true, sha, count: state.results[0].count };
   },
 };
 

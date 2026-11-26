@@ -6,7 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test",
-    "local": "node dev/local-server.js"
+    "local": "node dev/migrate.js && wrangler dev -c dev/wrangler.local.jsonc --port 8788"
   },
   "devDependencies": {
     "wrangler": "^4"

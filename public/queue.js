@@ -4,8 +4,12 @@ const STORE = 'photos';
 
 function open() {
   return new Promise((resolve, reject) => {
-    const r = indexedDB.open('rezanci', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE, { keyPath: 'sha' });
+    const r = indexedDB.open('rezanci', 2);
+    r.onupgradeneeded = event => {
+      // Version 1 was the test version with no upload. Its photos have no bag and cannot go to the archive.
+      if (event.oldVersion === 1) r.result.deleteObjectStore(STORE);
+      r.result.createObjectStore(STORE, { keyPath: 'sha' });
+    };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
   });

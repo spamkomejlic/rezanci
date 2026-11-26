@@ -19,6 +19,8 @@
   </header>
   <main class="stack">
     <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+    <!-- Photos on this phone that cannot go to the archive now: their bag is closed, or this phone is in a different bag. -->
+    <p id="held" class="status bad" role="status" hidden></p>
 
     <!-- This phone has no bag: no session, bag closed, or removed by the moderator. -->
     <section id="ended" class="card tint" data-group="main" hidden>
@@ -38,10 +40,9 @@
         <p id="shot" class="status" role="status" aria-live="polite" hidden></p>
         <div class="stats two">
           <div class="stat"><b id="count">0</b><span data-t="cap.onphone">on this phone</span></div>
-          <div class="stat"><b id="size">0</b><span data-t="cap.mb">MB on this phone</span></div>
+          <div class="stat"><b id="archived">0</b><span data-t="cap.archived">in the archive</span></div>
         </div>
-        <p class="muted small" data-t="cap.noupload">Test version: photos stay on this phone. Upload comes in the next version.</p>
-        <button id="clear" class="btn ghost small" type="button" data-t="cap.clear">Remove test photos</button>
+        <p id="sync" class="status" role="status" aria-live="polite" hidden></p>
       </section>
 
       <section class="card">

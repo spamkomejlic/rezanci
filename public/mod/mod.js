@@ -55,7 +55,8 @@ function renderPhones() {
     const name = Object.assign(document.createElement('div'), { className: 'name', textContent: p.name });
     const counts = Object.assign(document.createElement('div'), {
       className: 'muted small',
-      textContent: t('mod.phone.images', { n: p.images, v: p.verified }) + (p.flagged ? ' · ' + t('mod.phone.flagged', { n: p.flagged }) : ''),
+      textContent: [t('mod.phone.images', { v: p.verified, q: p.queue }), p.flagged && t('mod.phone.flagged', { n: p.flagged }),
+        !p.removed_at && p.silent >= 2 && t('mod.phone.silent', { m: p.silent })].filter(Boolean).join(' · '),
     });
     const info = Object.assign(document.createElement('div'), { className: 'grow' });
     info.append(name, counts);
@@ -129,7 +130,7 @@ async function closeBag(body) {
   if (!failed(r)) {
     $('tray').checked = false;
     $('force-reason').value = '';
-    say(status, t('mod.closed'), 'good');
+    say(status, t(r.data.manifest ? 'mod.closed' : 'mod.closed.nofile'), r.data.manifest ? 'good' : 'bad');
   }
   await refresh();
 }
@@ -143,6 +144,6 @@ addEventListener('hashchange', () => { wanted = bagFromAddress() ?? wanted; if (
 
 api('GET', '/api/mod/whoami').then(r => { if (r.ok) $('who').textContent = t('mod.who', r.data) + ' ·'; });
 await refresh();
-setInterval(() => { if (!document.hidden) refresh(); }, 4000);   // the screen follows the phones
+setInterval(() => { if (!document.hidden) refresh(); }, 5000);   // the screen follows the phones
 setInterval(tick, 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });

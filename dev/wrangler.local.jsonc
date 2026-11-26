@@ -1,0 +1,12 @@
+{
+  // Local run of the app: npm run local. Not used for the live site (that is ../wrangler.jsonc).
+  // The database and the archive are local copies in dev/.wrangler/. Delete that folder for an empty start.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "rezanci-local",
+  "main": "local-worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": { "directory": "../public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "rezanci-archive" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "rezanci", "database_id": "local", "migrations_dir": "../migrations" }],
+  "vars": { "COMMIT": "local" }
+}
