@@ -1,16 +1,22 @@
 // Operator capture screen: take a photo, check it, hash it, save it in the phone queue, send it to the archive.
 // A photo leaves this phone only after the server confirms that the archive holds the same bytes.
-import { $, api, boot, t, say, show, errorText } from '/ui.js';
-import { jpegSize, exifTime, sha256Hex } from '/jpeg.js';
+import { $, api, boot, t, say, show, errorText, keep } from '/ui.js';
+import { jpegSize, jpegComplete, exifTime, sha256Hex } from '/jpeg.js';
+import { measure } from '/quality.js';
 import * as queue from '/queue.js';
 
 const MIN_PIXELS = 48e6;   // camera specification: 48 MP or more
+// Limits of the quality warnings. They are first values: tests with the jig and real material give the final ones.
+const SHARP_LIMIT = 0.6;   // warn if the sharpness is under this share of the usual sharpness of this phone in this bag
+const SHARP_AFTER = 3;     // photos of this phone in this bag before the comparison starts
+const EXPOSURE_LIMIT = 0.98;   // warn if this share of the photo is pure white, or pure black
 boot();
 const status = $('status'), shot = $('shot'), sync = $('sync');
 let session = null;        // bag of this phone, as the server gave it
 let held = [];             // photos on this phone, oldest first
 let sending = false;       // one upload at a time
 let wait = 0, timer = 0;   // wait before the next try after an upload that failed
+let busy = false;          // a new photo is in the checks
 const refused = new Map(); // photos that the server refused in this visit: hash and reason
 
 function render() {
@@ -19,7 +25,7 @@ function render() {
   $('operator').textContent = session.name;
   $('operator').hidden = false;
   $('archived').textContent = String(session.verified);
-  $('capture').disabled = session.done;
+  $('capture').disabled = session.done || busy;
   $('done-lead').textContent = t(session.done ? 'cap.done.state' : 'cap.done.lead');
   $('done').textContent = t(session.done ? 'cap.done.off' : 'cap.done.on');
   $('done').className = 'btn wide ' + (session.done ? 'ghost' : 'soft');
@@ -61,8 +67,8 @@ async function refresh() {
   renderHeld();
 }
 
-// Photos of the open bag that wait for the archive.
-const waiting = () => held.filter(p => p.bag === session.label && !refused.has(p.sha));
+// Photos of the open bag that wait for the archive. A photo in the checks ("hold") waits for the operator first.
+const waiting = () => held.filter(p => p.bag === session.label && !p.hold && !refused.has(p.sha));
 
 // Sends the photos of this bag, oldest first. A photo stays on the phone until the server answers "verified".
 async function pump() {
@@ -76,6 +82,8 @@ async function pump() {
       say(sync, t('cap.sending', { n: waiting().length }));
       const q = new URLSearchParams({ sha: p.sha, bag: p.bag, w: p.width, h: p.height, left: held.length - 1 });
       if (p.taken) q.set('taken', p.taken);
+      if (p.quality) for (const name of ['blur', 'clipped', 'dark']) q.set(name, p.quality[name].toFixed(4));
+      if (p.flag) q.set('flag', '1');
       const r = await api('PUT', '/api/op/photo?' + q, p.blob);
       if (r.ok && r.data.verified === true && r.data.sha === p.sha) {
         await queue.remove(p.sha);              // the archive holds this photo: the copy on this phone can go
@@ -105,6 +113,32 @@ async function pump() {
   else say(sync, held.length === 0 && session.verified > 0 ? t('cap.allsent') : '', 'good');
 }
 
+// Sharpness scores of the earlier photos of this phone in one bag. A new photo is compared with their middle value,
+// so each phone and each material has its own baseline.
+const scoresOf = bag => { try { return JSON.parse(keep.get('sharp:' + bag) ?? '[]'); } catch { return []; } };
+const median = list => [...list].sort((a, b) => a - b)[list.length >> 1];
+
+// Text keys of the reasons to show this photo to the operator. An empty list means that the photo is good.
+function concerns(q, usual) {
+  const list = [];
+  if (usual.length >= SHARP_AFTER && q.sharp < SHARP_LIMIT * median(usual)) list.push('cap.review.blur');
+  if (q.clipped > EXPOSURE_LIMIT) list.push('cap.review.white');
+  if (q.dark > EXPOSURE_LIMIT) list.push('cap.review.black');
+  return list;
+}
+
+// Shows a part of the photo at full size and waits for the operator. Resolves to true for "keep".
+function review(q, reasons) {
+  $('review-why').textContent = reasons.map(key => t(key)).join(' ');
+  if (q.crop) $('review-crop').getContext('2d').putImageData(q.crop, 0, 0);
+  $('review').hidden = false;
+  $('review').scrollIntoView({ block: 'start' });
+  return new Promise(resolve => {
+    $('keep').onclick = () => resolve(true);
+    $('retake').onclick = () => resolve(false);
+  }).finally(() => { $('review').hidden = true; });
+}
+
 async function take(file) {
   if (!session || session.done) return;
   const buf = await file.arrayBuffer();
@@ -112,19 +146,57 @@ async function take(file) {
   if (!size) return say(shot, t('cap.notjpeg'), 'bad');
   const mp = (size.w * size.h / 1e6).toFixed(1);
   if (size.w * size.h < MIN_PIXELS) return say(shot, t('cap.small', { mp }), 'bad');
+  if (!jpegComplete(buf)) return say(shot, t('cap.partial'), 'bad');
   const sha = await sha256Hex(buf);                       // hash first, then one short storage transaction
   // The record keeps the bag of the photo. The server takes the photo only into that bag.
-  await queue.put({ sha, bag: session.label, blob: file, width: size.w, height: size.h, taken: exifTime(buf), saved: Date.now() });
-  say(shot, t('cap.saved', { mp, mb: (file.size / 1048576).toFixed(1) }), 'good');
+  // "hold": the photo is on the phone, and the upload waits for the quality checks.
+  const record = { sha, bag: session.label, blob: file, width: size.w, height: size.h, taken: exifTime(buf), saved: Date.now(), hold: true };
+  await queue.put(record);
+  const saved = t('cap.saved', { mp, mb: (file.size / 1048576).toFixed(1) });
+  say(shot, saved + ' ' + t('cap.checking'), 'good');
+  if (!sending) say(sync, '');                            // "all photos are in the archive" is not true now
+  await refresh();
+
+  // A phone with little memory can stop the page during the decode. If that happened before,
+  // this phone does not measure again: its photos go to the archive with no quality numbers.
+  let q = null;
+  if (!keep.get('nomeasure')) {
+    keep.set('measuring', '1');
+    q = await measure(file);
+    keep.set('measuring', '');
+  }
+  say(shot, saved, 'good');
+  delete record.hold;
+  if (q) {
+    record.quality = { blur: q.sharp, clipped: q.clipped, dark: q.dark };
+    const usual = scoresOf(record.bag), reasons = concerns(q, usual);
+    if (!reasons.length) keep.set('sharp:' + record.bag, JSON.stringify([...usual, q.sharp].slice(-15)));
+    else if (await review(q, reasons)) record.flag = 1;   // kept after a warning: the moderator sees the count
+    else {
+      await queue.remove(sha);                            // the operator takes the photo again
+      say(shot, t('cap.retake'));
+      return refresh();
+    }
+  }
+  await queue.put(record);
   await refresh();
   pump();
+}
+
+// One photo at a time goes through the checks: the decode of a 50 MP photo needs much memory.
+async function checked(file) {
+  busy = true;
+  $('capture').disabled = true;
+  try { await take(file); } catch (err) { say(shot, t('cap.notsaved', { why: err.message }), 'bad'); }
+  busy = false;
+  $('capture').disabled = !session || session.done;
 }
 
 $('capture').onclick = () => $('camera').click();
 $('camera').onchange = event => {
   const file = event.target.files[0];
   event.target.value = '';                                // the same input must fire again for the next shot
-  if (file) take(file).catch(err => say(shot, t('cap.notsaved', { why: err.message }), 'bad'));
+  if (file) checked(file);
 };
 
 $('done').onclick = async () => {
@@ -147,7 +219,12 @@ const look = async () => {
 
 // Ask the browser not to evict the queue under storage pressure.
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+// The page stopped during a decode: do not measure on this phone again.
+if (keep.get('measuring')) { keep.set('nomeasure', '1'); keep.set('measuring', ''); }
 await refresh().catch(err => say(shot, t('cap.queue', { why: err.message }), 'bad'));
+// A photo that was in the checks when the page closed has no decision of the operator: it goes as flagged.
+for (const { hold, ...p } of held.filter(p => p.hold)) await queue.put({ ...p, flag: 1 });
+await refresh().catch(() => {});
 await look();
 setInterval(look, 30000);
 document.addEventListener('visibilitychange', look);

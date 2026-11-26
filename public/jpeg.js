@@ -17,6 +17,34 @@ export function jpegSize(buf) {
   return null;
 }
 
+// True if the file holds the full image: the end marker comes after the image data.
+// A phone can add its own data after the end marker, so the last bytes of the file are not the test.
+export function jpegComplete(buf) {
+  const b = new Uint8Array(buf), n = b.length;
+  if (n < 4 || b[0] !== 0xFF || b[1] !== 0xD8) return false;
+  let o = 2, inData = false, hadData = false;
+  while (o + 1 < n) {
+    if (inData) {
+      // Image data runs to the next marker. FF00 is a data byte, FFD0 to FFD7 are restart marks, FFFF is fill.
+      const at = b.indexOf(0xFF, o);
+      if (at < 0 || at + 1 >= n) return false;
+      const m = b[at + 1];
+      if (m === 0x00 || (m >= 0xD0 && m <= 0xD7)) o = at + 2;
+      else if (m === 0xFF) o = at + 1;
+      else { o = at; inData = false; }
+      continue;
+    }
+    if (b[o] !== 0xFF) return false;
+    const m = b[o + 1];
+    if (m === 0xFF) { o++; continue; }
+    if (m === 0xD9) return hadData;                            // end marker
+    if (o + 3 >= n) return false;
+    o += 2 + ((b[o + 2] << 8) | b[o + 3]);                     // each other part states its length
+    if (m === 0xDA) inData = hadData = true;                   // image data follows this part
+  }
+  return false;
+}
+
 // Capture time (EXIF DateTimeOriginal) as "YYYY:MM:DD HH:MM:SS". Returns null if there is none.
 export function exifTime(buf) {
   try {

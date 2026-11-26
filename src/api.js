@@ -131,7 +131,7 @@ async function writeManifest(env, db, id) {
        FROM enrollments WHERE session_id = ? ORDER BY enrolled_at, rowid`).bind(id),
     // ponytail: all image records of the session in one read. Page the read if a session passes about 5000 photos.
     db.prepare(
-      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, e.rowid AS phone
+      `SELECT i.sha256, i.bytes, i.width, i.height, i.captured_at, i.created_at, i.verified_at, i.state, i.flagged, i.blur_score, i.clipped, i.dark, e.rowid AS phone
        FROM images i JOIN enrollments e ON e.token_hash = i.token_hash WHERE i.session_id = ? ORDER BY i.created_at, i.sha256`).bind(id),
   ])).map(r => r.results);
   if (!s) return false;
@@ -332,7 +332,8 @@ export const routes = {
 
   // Photo upload. The request body is the JPEG file. The address carries the values that the phone computed:
   // sha (SHA-256 of the file), bag (label of the bag of this photo), w and h (pixel size), taken (capture time),
-  // left (photos that stay on the phone after this one).
+  // left (photos that stay on the phone after this one), and the quality numbers: blur (sharpness score),
+  // clipped and dark (share of pure white and of pure black), flag (the operator kept the photo after a warning).
   // The archive checks the body against the SHA-256 and refuses a body that differs. It never overwrites a file.
   // Then the Worker reads the stored file data back and compares it. Only after that the photo is "verified",
   // and only that answer lets the phone delete its copy.
@@ -350,9 +351,13 @@ export const routes = {
     const label = bagLabel(operator.location_code, operator.bag_id);
     if (q.get('bag') !== label) refuse(409, 'wrong_bag', { bag: label });
 
+    // The quality numbers are records, not checks. A value that is missing or out of range counts as "not measured".
+    const measured = (name, max) => { const v = Number(q.get(name) ?? NaN); return v >= 0 && v <= max ? v : null; };
     await db.prepare(
-      `INSERT OR IGNORE INTO images (session_id, sha256, token_hash, bytes, width, height, captured_at, state, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`).bind(operator.session_id, sha, operator.token_hash, bytes, width, height, taken, now).run();
+      `INSERT OR IGNORE INTO images (session_id, sha256, token_hash, bytes, width, height, captured_at, blur_score, clipped, dark, flagged, state, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+      .bind(operator.session_id, sha, operator.token_hash, bytes, width, height, taken,
+        measured('blur', 255), measured('clipped', 1), measured('dark', 1), q.get('flag') === '1' ? 1 : 0, now).run();
 
     // A repeated upload of the same file finds the name in use and stores nothing.
     // The answer of the write does not decide: the read below does, for a new file and for a repeated one.

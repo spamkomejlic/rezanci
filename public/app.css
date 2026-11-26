@@ -133,6 +133,8 @@ code { font-family: var(--mono); font-size: .9em; }
 .status { padding: .7rem .9rem; border-radius: var(--radius-s); background: var(--blue-soft); font-weight: 550; }
 .status.good { color: var(--good); background: var(--good-soft); }
 .status.bad { color: var(--bad); background: var(--bad-soft); }
+/* Part of a photo at full size, for the operator to judge its sharpness. */
+.crop { display: block; width: 100%; height: auto; border-radius: var(--radius-s); background: var(--bg-2); }
 
 /* Round capture button with an accent ring that breathes while the phone waits for a shot. */
 .shutter {

@@ -34,6 +34,16 @@
         <p class="muted small" data-t="cap.check">Check that this is the label on the bag at your table.</p>
       </section>
 
+      <!-- A photo that looks blurred or has a wrong exposure: the operator sees a part of it and decides. -->
+      <section id="review" class="card" hidden>
+        <h2 data-t="cap.review.title">Check this photo</h2>
+        <p id="review-why" class="status bad"></p>
+        <canvas id="review-crop" class="crop" width="512" height="512"></canvas>
+        <p class="muted small" data-t="cap.review.lead">This is a part of the photo at full size.</p>
+        <button id="retake" class="btn wide" type="button" data-t="cap.review.retake">Take it again</button>
+        <button id="keep" class="btn ghost wide" type="button" data-t="cap.review.keep">Keep this photo</button>
+      </section>
+
       <section class="card center">
         <input id="camera" type="file" accept="image/*" capture="environment" hidden>
         <button id="capture" class="shutter" type="button" data-t="cap.shoot">Capture</button>

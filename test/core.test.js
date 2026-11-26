@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { jpegSize, exifTime, sha256Hex } from '../public/jpeg.js';
+import { jpegSize, jpegComplete, exifTime, sha256Hex } from '../public/jpeg.js';
+import { tileSharpness } from '../public/quality.js';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 import { isCrossSite, accessClaims } from '../src/worker.js';
 
@@ -15,6 +16,39 @@ test('jpegSize reads the frame size and refuses other data', () => {
   assert.deepEqual(jpegSize(hex(SOF)), { w: 8160, h: 6120 });
   assert.equal(jpegSize(hex('89504E470D0A1A0A0000')), null);
   assert.equal(jpegSize(new ArrayBuffer(0)), null);
+});
+
+test('jpegComplete finds the end marker after the image data, and only there', () => {
+  const DATA = 'FFDA0002' + '1234FF00ABFFD0CDFFFF';                 // image data with a stuffed byte, a restart mark and fill
+  assert.equal(jpegComplete(hex(SOF + DATA + 'FFD9')), true);
+  assert.equal(jpegComplete(hex(SOF + DATA + 'FFD9' + 'DEADBEEF00')), true);   // data of the phone after the end marker
+  assert.equal(jpegComplete(hex(SOF + DATA + 'FFC400040000' + 'FFDA0002' + '77' + 'FFD9')), true);   // two scans
+  assert.equal(jpegComplete(hex(SOF + DATA)), false);               // cut off inside the image data
+  assert.equal(jpegComplete(hex(SOF + DATA + 'FF')), false);
+  assert.equal(jpegComplete(hex(SOF)), false);                      // header only
+  assert.equal(jpegComplete(hex('FFD8' + 'FFE10006FFD90000' + 'FFC0000B0817E81FE003000000' + 'FFDA0002' + '1234')), false);   // end marker of a thumbnail only
+  assert.equal(jpegComplete(hex('FFD8FFD9')), false);               // no image data
+  assert.equal(jpegComplete(hex('89504E470D0A1A0A0000')), false);
+});
+
+test('tileSharpness is high for hard edges and low for focus blur and for motion blur', () => {
+  const size = 64;
+  // Gray values of a tile with bars in both directions, then the same tile after a blur of "rx" by "ry" pixels.
+  const bars = (x, y) => ((x >> 3) & 1) ^ ((y >> 3) & 1) ? 220 : 40;
+  const tile = (rx, ry) => {
+    const data = new Uint8ClampedArray(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      let sum = 0, count = 0;
+      for (let dy = -ry; dy <= ry; dy++) for (let dx = -rx; dx <= rx; dx++) { sum += bars(x + dx, y + dy); count++; }
+      data.fill(sum / count, (y * size + x) * 4, (y * size + x) * 4 + 3);
+    }
+    return data;
+  };
+  const sharp = tileSharpness(tile(0, 0), size);
+  assert.ok(sharp > 150, `sharp ${sharp}`);
+  assert.ok(tileSharpness(tile(3, 3), size) < sharp * 0.5, 'focus blur');
+  assert.ok(tileSharpness(tile(4, 0), size) < sharp * 0.5, 'motion blur in one direction');
+  assert.equal(tileSharpness(new Uint8ClampedArray(size * size * 4).fill(128), size), 0);   // no content
 });
 
 test('exifTime reads the capture time and returns null with no EXIF block', () => {

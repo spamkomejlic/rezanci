@@ -129,8 +129,8 @@ test('photo upload: checked by the archive, verified one time, kept in its bag, 
   const cookieOf = answer => answer.headers.get('Set-Cookie').split(';')[0];
   const phones = async moderator => (await mod('GET /api/mod/session', moderator)).session.phones;
   const photo = crypto.getRandomValues(new Uint8Array(3000)), sha = await sha256Hex(photo);
-  const send = (cookie, bag, { bytes = photo, hash = sha, w = 8160, h = 6120, left = 0 } = {}) => call('PUT',
-    `/api/op/photo?${new URLSearchParams({ sha: hash, bag, w, h, left, taken: '2026:11:26 10:00:00' })}`, { body: bytes, cookie });
+  const send = (cookie, bag, { bytes = photo, hash = sha, w = 8160, h = 6120, left = 0, ...more } = {}) => call('PUT',
+    `/api/op/photo?${new URLSearchParams({ sha: hash, bag, w, h, left, taken: '2026:11:26 10:00:00', ...more })}`, { body: bytes, cookie });
 
   await mod('POST /api/mod/locations', cy, { code: 'L02', name: 'Room 2' });
   const [bagA, bagB] = (await mod('POST /api/mod/bags', cy, { location: 'L02', count: 2 })).labels;
@@ -201,7 +201,11 @@ test('photo upload: checked by the archive, verified one time, kept in its bag, 
   const [trial] = (await mod('POST /api/mod/bags', cy, { location: 'TEST1', count: 1 })).labels;
   await open(cy, trial);
   assert.ok((await db.prepare('SELECT manifest_at FROM sessions WHERE id = ?').bind(sessionA).first()).manifest_at);
-  assert.equal((await send(cookieOf(await join(cy)), trial)).status, 200);
+  // The quality numbers of the phone go into the record. A photo that the operator kept after a warning counts as flagged.
+  assert.equal((await send(cookieOf(await join(cy)), trial, { blur: 41.5, clipped: 0.02, dark: 7, flag: 1 })).status, 200);
+  assert.deepEqual(await db.prepare('SELECT blur_score, clipped, dark, flagged FROM images WHERE sha256 = ? ORDER BY created_at DESC').bind(sha).first(),
+    { blur_score: 41.5, clipped: 0.02, dark: null, flagged: 1 });
+  assert.equal((await phones(cy))[0].flagged, 1);
   assert.equal((await archive.head(`test/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`)).size, 3000);
   assert.equal(await archive.head(`locations/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`), null);
 });
