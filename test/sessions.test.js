@@ -192,6 +192,13 @@ test('photo upload: checked by the archive, verified one time, kept in its bag, 
   assert.deepEqual(manifest.images.map(i => [i.sha256, i.bytes, i.width, i.state, i.captured_at]), [[sha, 3000, 8160, 'verified', '2026:11:26 10:00:00']]);
   assert.equal((await send(cookie, bagA)).status, 401);          // a closed bag takes no photo
 
+  // Bag overview of the location: state and counts of each bag.
+  const overview = async code => (await routes['GET /api/mod/bags']({ db, url: new URL('https://rezanci.net/api/mod/bags?location=' + code) })).bags;
+  assert.deepEqual((await overview('L02')).map(b => [b.label, b.state, b.sessions, b.photos, b.flagged, b.missing, b.moderator]),
+    [[bagA, 'closed', 1, 1, 0, 0, 'cy@example.com'], [bagB, 'open', 1, 0, 0, 0, 'dee@example.com']]);
+  assert.deepEqual((await overview('L01')).map(b => b.state), ['forced', 'open', 'new', 'new', 'new']);
+  assert.deepEqual(await overview('NONE'), []);
+
   // A closed session with no manifest gets its file when the next bag opens.
   await db.prepare('UPDATE sessions SET manifest_at = NULL WHERE id = ?').bind(sessionA).run();
   await mod('POST /api/mod/session/close', dee, { force_reason: 'End of the upload test' });
@@ -208,6 +215,16 @@ test('photo upload: checked by the archive, verified one time, kept in its bag, 
   assert.equal((await phones(cy))[0].flagged, 1);
   assert.equal((await archive.head(`test/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`)).size, 3000);
   assert.equal(await archive.head(`locations/TEST1/bags/${trial.slice(6, 13)}/${sha}.jpg`), null);
+
+  // A photo that did not arrive before a close shows in the overview, until it arrives in a later session of the bag.
+  const second = crypto.getRandomValues(new Uint8Array(2000)), secondSha = await sha256Hex(second);
+  assert.equal((await send(cookieOf(await join(cy)), trial, { bytes: second.map(b => b ^ 1), hash: secondSha })).status, 502);
+  await mod('POST /api/mod/session/close', cy, { force_reason: 'A photo did not arrive' });
+  assert.deepEqual((await overview('TEST1')).map(b => [b.state, b.sessions, b.photos, b.flagged, b.missing]), [['forced', 1, 1, 1, 1]]);
+  await mod('POST /api/mod/session', cy, { label: trial, material: 'torn', reason: 'The phone has the photo' });
+  assert.equal((await send(cookieOf(await join(cy)), trial, { bytes: second, hash: secondSha })).status, 200);
+  await mod('POST /api/mod/session/close', cy, { force_reason: 'End of the overview test' });
+  assert.deepEqual((await overview('TEST1')).map(b => [b.state, b.sessions, b.photos, b.missing]), [['forced', 2, 2, 0]]);
 });
 
 test('the Worker refuses requests with no login, from a different site, or with a bad body', async () => {

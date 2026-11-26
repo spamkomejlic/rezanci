@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e8f3fd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0a1520" media="(prefers-color-scheme: dark)">
+<title>rezanci</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="/mod/"><span class="brand-mark"></span>rezanci</a>
+    <a class="chip" href="/mod/" data-t="lab.back">Back</a>
+    <button id="lang" class="chip" type="button"></button>
+  </header>
+  <main class="stack">
+    <h1 data-t="bags.link">Bag overview</h1>
+    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+    <section class="card">
+      <label class="field"><span data-t="lab.make.location">Location</span>
+        <select id="location"></select></label>
+      <!-- The four counts are also the filter of the list. -->
+      <div id="filter" class="stats two">
+        <button class="stat" type="button" data-state="all"><b>0</b><span data-t="bags.all">All</span></button>
+        <button class="stat" type="button" data-state="new"><b>0</b><span data-t="bags.new">Not opened</span></button>
+        <button class="stat" type="button" data-state="open"><b>0</b><span data-t="bags.open">Open</span></button>
+        <button class="stat" type="button" data-state="closed"><b>0</b><span data-t="bags.closed">Closed</span></button>
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="muted small" data-t="bags.lead">Tap a bag to open it on the moderator screen.</p>
+      <p id="none" class="muted" data-t="bags.none" hidden>No bag in this location. Make labels first.</p>
+      <ul id="bags" class="list"></ul>
+    </section>
+  </main>
+</div>
+<script type="module" src="/mod/bags.js"></script>
+</body>
+</html>

@@ -194,6 +194,41 @@ export const routes = {
     return { labels: made.results.map(r => bagLabel(location, r.id)).sort() };
   },
 
+  // Overview of the bags of one location: state of each bag (new, open, closed, forced) and its photo counts.
+  'GET /api/mod/bags': async ({ db, url }) => {
+    const location = url.searchParams.get('location') ?? '';
+    const [bags, sessions] = (await db.batch([
+      db.prepare('SELECT id FROM bags WHERE location_code = ? ORDER BY id').bind(location),
+      db.prepare(
+        `SELECT s.bag_id, s.moderator, s.opened_at, s.closed_at, s.close_type,
+           COALESCE(SUM(e.images), 0) AS images, COALESCE(SUM(e.verified), 0) AS verified, COALESCE(SUM(e.flagged), 0) AS flagged
+         FROM sessions s JOIN bags b ON b.id = s.bag_id LEFT JOIN enrollments e ON e.session_id = s.id
+         WHERE b.location_code = ? GROUP BY s.id ORDER BY s.opened_at`).bind(location),
+    ])).map(r => r.results);
+    // Image records of closed sessions that are not verified. A photo that reached the archive in a later session
+    // of the same bag does not count. The read runs only if a counter shows such a record.
+    const missing = !sessions.some(s => s.closed_at && s.images > s.verified) ? [] : (await db.prepare(
+      `SELECT s.bag_id, COUNT(DISTINCT i.sha256) AS n
+       FROM enrollments e JOIN sessions s ON s.id = e.session_id JOIN bags b ON b.id = s.bag_id
+         JOIN images i ON i.session_id = s.id AND i.token_hash = e.token_hash AND i.state <> 'verified'
+       WHERE b.location_code = ? AND s.closed_at IS NOT NULL AND e.images > e.verified
+         AND NOT EXISTS (SELECT 1 FROM sessions o JOIN images v ON v.session_id = o.id AND v.sha256 = i.sha256
+                         WHERE o.bag_id = s.bag_id AND v.state = 'verified')
+       GROUP BY s.bag_id`).bind(location).all()).results;
+    // The last session of a bag gives its state and its time. The counts are the sums of all its sessions.
+    const of = Map.groupBy(sessions, s => s.bag_id);
+    return { bags: bags.map(({ id }) => {
+      const all = of.get(id) ?? [], last = all.at(-1);
+      return {
+        label: bagLabel(location, id),
+        state: !last ? 'new' : !last.closed_at ? 'open' : last.close_type === 'forced' ? 'forced' : 'closed',
+        moderator: last?.moderator ?? null, at: last ? last.closed_at ?? last.opened_at : null, sessions: all.length,
+        photos: all.reduce((n, s) => n + s.verified, 0), flagged: all.reduce((n, s) => n + s.flagged, 0),
+        missing: missing.find(m => m.bag_id === id)?.n ?? 0,
+      };
+    }) };
+  },
+
   // Open session of this moderator with its phones, for the moderator screen. The screen polls it.
   'GET /api/mod/session': async ({ db, moderator, now }) => {
     const s = await openSession(db, moderator.email);
