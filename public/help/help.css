@@ -1,0 +1,29 @@
+/* Short guides for the operator and the moderator: one column, made for a phone. Uses the colors of app.css. */
+
+.guide { counter-reset: step; }
+.step { counter-increment: step; }
+.step h2 { display: flex; align-items: center; gap: .6rem; }
+.step h2::before {   /* number of the step in a circle */
+  content: counter(step); flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%;
+  font-size: 1rem; color: var(--on-primary); background: var(--primary);
+}
+/* Screenshot of the app. */
+.shot { display: block; width: 100%; height: auto; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--bg-2); }
+
+/* Lists of "always" and "never". */
+.marks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+.marks li { display: flex; gap: .6rem; align-items: baseline; }
+.marks li::before { flex: none; width: 1.1em; font-weight: 800; text-align: center; }
+.marks.yes li::before { content: "\2713"; color: var(--good); }
+.marks.no li::before { content: "\2715"; color: var(--bad); }
+
+/* Problem and what to do. */
+.fix { margin: 0; }
+.fix dt { font-weight: 650; }
+.fix dd { margin: 0 0 .7rem; color: var(--ink-2); }
+.fix dd:last-child { margin-bottom: 0; }
+
+@media print {
+  .card { break-inside: avoid; }
+  .guide .card { border: 1px solid #bbb; padding: 4mm; }
+}

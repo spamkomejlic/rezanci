@@ -4,11 +4,14 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { TEXT } from '../public/i18n.js';
+import { HELP } from '../public/help/text.js';
 import { ERRORS, MATERIALS } from '../src/api.js';
 
 const pub = new URL('../public/', import.meta.url);
 const read = path => readFileSync(new URL(path, pub), 'utf8');
 const pages = ['index.html', 'join.html', 'capture.html', 'mod/index.html', 'mod/labels.html', 'mod/bags.html', 'mod/photos.html'];
+// Help pages: two short guides and the slides. Their texts are in help/text.js.
+const help = ['help/operator.html', 'help/moderator.html', 'help/slides.html'];
 const scriptOf = html => /<script type="module" src="\/([^"]+)"><\/script>/.exec(html)[1];
 
 test('each text that a page uses exists in English and in Serbian', () => {
@@ -35,8 +38,25 @@ test('each text that a page uses exists in English and in Serbian', () => {
   for (const key of Object.keys(TEXT.en)) assert.ok(used.has(key), `text "${key}" is not in use`);
 });
 
+test('each text of the help pages exists in both languages, each help text is in use, each screenshot has both files', () => {
+  const used = new Set(), shots = new Set();
+  for (const page of help) {
+    const html = read(page);
+    for (const m of html.matchAll(/data-t(?:-label)?="([^"]+)"/g)) used.add(m[1]);
+    for (const m of html.matchAll(/data-shot="([^"]+)"/g)) shots.add(m[1]);
+  }
+  assert.ok(used.size > 100 && shots.size >= 20, 'the scan found the keys and the screenshots');
+  for (const key of used) for (const language of ['en', 'sr'])
+    assert.ok(HELP[language][key] ?? TEXT[language][key], `${language} has no text "${key}"`);
+  assert.deepEqual(Object.keys(HELP.sr).sort(), Object.keys(HELP.en).sort());
+  for (const key of Object.keys(HELP.en)) assert.ok(used.has(key), `help text "${key}" is not in use`);
+  for (const key of Object.keys(HELP.en)) assert.ok(!(key in TEXT.en), `"${key}" is a key of the app texts too`);
+  for (const name of shots) for (const language of ['en', 'sr'])
+    assert.ok(existsSync(new URL(`help/shots/${language}/${name}.webp`, pub)), `no screenshot ${language}/${name}`);
+});
+
 test('each element that a page script names exists in the page', () => {
-  for (const page of pages) {
+  for (const page of [...pages, 'help/slides.html']) {
     const html = read(page), script = scriptOf(html);
     const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
     const code = read(script);
@@ -48,7 +68,7 @@ test('each element that a page script names exists in the page', () => {
 });
 
 test('no page has inline code or inline style, which the content security policy blocks', () => {
-  for (const page of pages) {
+  for (const page of [...pages, ...help]) {
     const html = read(page);
     assert.ok(!/<script(?![^>]*\ssrc=)/i.test(html), `${page}: inline script`);
     assert.ok(!/\son[a-z]+\s*=/i.test(html), `${page}: inline event handler`);
@@ -59,7 +79,7 @@ test('no page has inline code or inline style, which the content security policy
 
 test('the service worker keeps each file that the operator pages load, and each kept file exists', () => {
   const shell = [...read('sw.js').match(/const SHELL = \[([^\]]+)\]/)[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
-  const file = path => ({ '/': 'index.html', '/capture': 'capture.html', '/join': 'join.html' })[path] ?? path.slice(1);
+  const file = path => ({ '/': 'index.html', '/capture': 'capture.html', '/join': 'join.html', '/help/operator': 'help/operator.html' })[path] ?? path.slice(1);
   // One missing file stops the install of the service worker, so each name must be a real file.
   for (const path of shell) assert.ok(existsSync(new URL(file(path), pub)), `sw.js keeps "${path}", which is not a file`);
   // Each file that an operator page needs: the page, its style sheet, its script, and each module behind the script.
@@ -69,7 +89,7 @@ test('the service worker keeps each file that the operator pages load, and each 
     needed.add(script);
     for (const m of read(script.slice(1)).matchAll(/from '(\/[^']+)'/g)) follow(m[1]);
   };
-  for (const path of ['/', '/capture', '/join']) {
+  for (const path of ['/', '/capture', '/join', '/help/operator']) {
     needed.add(path);
     const html = read(file(path));
     follow('/' + scriptOf(html));

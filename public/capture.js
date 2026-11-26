@@ -1,7 +1,7 @@
 // Operator capture screen: take a photo, check it, hash it, save it in the phone queue, send it to the archive.
 // A photo leaves this phone only after the server confirms that the archive holds the same bytes.
 import { $, api, boot, t, say, show, errorText, keep, lastSession } from '/ui.js';
-import { jpegSize, jpegComplete, exifTime, sha256Hex } from '/jpeg.js';
+import { jpegSize, jpegClean, exifTime, sha256Hex } from '/jpeg.js';
 import { measure } from '/quality.js';
 import * as queue from '/queue.js';
 import { scanButton } from '/scan.js';
@@ -161,13 +161,17 @@ async function take(file) {
   if (!size) return say(shot, t('cap.notjpeg'), 'bad');
   const mp = (size.w * size.h / 1e6).toFixed(1);
   if (size.w * size.h < MIN_PIXELS) return say(shot, t('cap.small', { mp }), 'bad');
-  if (!jpegComplete(buf)) return say(shot, t('cap.partial'), 'bad');
-  const sha = await sha256Hex(buf);                       // hash first, then one short storage transaction
+  // Only the picture leaves this phone. The data that the camera wrote into the file about the phone and the place
+  // is removed here, before the hash: the archive never gets the file of the camera.
+  const clean = jpegClean(buf);
+  if (!clean) return say(shot, t('cap.partial'), 'bad');
+  const photo = new Blob([clean], { type: 'image/jpeg' });
+  const sha = await sha256Hex(clean);                     // hash first, then one short storage transaction
   // The record keeps the bag of the photo. The server takes the photo only into that bag.
   // "hold": the photo is on the phone, and the upload waits for the quality checks.
-  const record = { sha, bag: session.label, blob: file, width: size.w, height: size.h, taken: exifTime(buf), saved: Date.now(), hold: true };
+  const record = { sha, bag: session.label, blob: photo, width: size.w, height: size.h, taken: exifTime(buf), saved: Date.now(), hold: true };
   await queue.put(record);
-  const saved = t('cap.saved', { mp, mb: (file.size / 1048576).toFixed(1) });
+  const saved = t('cap.saved', { mp, mb: (photo.size / 1048576).toFixed(1) });
   say(shot, saved + ' ' + t('cap.checking'), 'good');
   if (!sending) say(sync, '');                            // "all photos are in the archive" is not true now
   await refresh();
@@ -177,7 +181,7 @@ async function take(file) {
   let q = null;
   if (Number(keep.get('stops')) < 2) {
     keep.set('measuring', '1');
-    q = await measure(file);
+    q = await measure(photo);
     keep.set('measuring', '');
     if (q) keep.set('stops', '0');
   }

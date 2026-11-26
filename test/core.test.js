@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { jpegSize, jpegComplete, exifTime, sha256Hex } from '../public/jpeg.js';
+import { jpegSize, jpegClean, exifTime, sha256Hex } from '../public/jpeg.js';
 import { tileSharpness } from '../public/quality.js';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 import { isCrossSite, accessClaims } from '../src/worker.js';
@@ -18,17 +18,38 @@ test('jpegSize reads the frame size and refuses other data', () => {
   assert.equal(jpegSize(new ArrayBuffer(0)), null);
 });
 
-test('jpegComplete finds the end marker after the image data, and only there', () => {
+test('jpegClean keeps the picture and drops the data of the phone, and refuses a file that is not complete', () => {
+  const clean = s => { const out = jpegClean(hex(s)); return out && Buffer.from(out).toString('hex').toUpperCase(); };
+  const text = s => Buffer.from(s, 'latin1').toString('hex').toUpperCase();
+  const FRAME = 'FFC0000B0817E81FE003000000';
   const DATA = 'FFDA0002' + '1234FF00ABFFD0CDFFFF';                 // image data with a stuffed byte, a restart mark and fill
-  assert.equal(jpegComplete(hex(SOF + DATA + 'FFD9')), true);
-  assert.equal(jpegComplete(hex(SOF + DATA + 'FFD9' + 'DEADBEEF00')), true);   // data of the phone after the end marker
-  assert.equal(jpegComplete(hex(SOF + DATA + 'FFC400040000' + 'FFDA0002' + '77' + 'FFD9')), true);   // two scans
-  assert.equal(jpegComplete(hex(SOF + DATA)), false);               // cut off inside the image data
-  assert.equal(jpegComplete(hex(SOF + DATA + 'FF')), false);
-  assert.equal(jpegComplete(hex(SOF)), false);                      // header only
-  assert.equal(jpegComplete(hex('FFD8' + 'FFE10006FFD90000' + 'FFC0000B0817E81FE003000000' + 'FFDA0002' + '1234')), false);   // end marker of a thumbnail only
-  assert.equal(jpegComplete(hex('FFD8FFD9')), false);               // no image data
-  assert.equal(jpegComplete(hex('89504E470D0A1A0A0000')), false);
+  // A record that is not color data goes (here the APP0 part of SOF). The bytes after the end marker go.
+  assert.equal(clean(SOF + DATA + 'FFD9'), 'FFD8' + FRAME + DATA + 'FFD9');
+  assert.equal(clean(SOF + DATA + 'FFD9' + 'DEADBEEF00'), 'FFD8' + FRAME + DATA + 'FFD9');
+  assert.equal(clean(SOF + DATA + 'FFC400040000' + 'FFDA0002' + '77' + 'FFD9'), 'FFD8' + FRAME + DATA + 'FFC400040000' + 'FFDA0002' + '77' + 'FFD9');   // two scans
+  // Not complete: no end marker after the image data.
+  assert.equal(clean(SOF + DATA), null);                            // cut off inside the image data
+  assert.equal(clean(SOF + DATA + 'FF'), null);
+  assert.equal(clean(SOF), null);                                   // header only
+  assert.equal(clean('FFD8' + 'FFE10006FFD90000' + FRAME + 'FFDA0002' + '1234'), null);   // end marker of a thumbnail only
+  assert.equal(clean('FFD8FFD9'), null);                            // no image data
+  assert.equal(clean('89504E470D0A1A0A0000'), null);
+
+  // A camera file: record with the turn of the picture and a place, a second record, a comment, a color profile,
+  // a list of more pictures, a table, the frame, the image data, and data of the phone after the end marker.
+  const turned = 'FFE10022' + text('Exif') + '0000' + '49492A0008000000' + '0100' + '120103000100000006000000' + '00000000';
+  const place = 'FFE1000F' + text('GPS 44.8,20.4');
+  const comment = 'FFFE0009' + text('Phone X');
+  const color = 'FFE20010' + text('ICC_PROFILE') + '000101', adobe = 'FFEE0009' + text('Adobe') + '0064';
+  const more = 'FFE20008' + text('MPF') + '000000', table = 'FFDB00040000';
+  const camera = 'FFD8' + turned + place + comment + color + adobe + more + table + FRAME + DATA + 'FFD9' + text('trailer of the phone');
+  const onlyTurn = 'FFE10022' + text('Exif') + '0000' + '4D4D002A00000008' + '0001' + '011200030000000100060000' + '00000000';
+  const copy = 'FFD8' + onlyTurn + color + adobe + table + FRAME + DATA + 'FFD9';
+  assert.equal(clean(camera), copy);
+  assert.equal(clean(copy), copy);                                  // a copy of a copy is the same file
+  for (const gone of ['GPS', 'Phone X', 'MPF', 'trailer']) assert.ok(!clean(camera).includes(text(gone)), gone);
+  // A file with a capture time and no turn value: the time goes, and no record is written.
+  assert.equal(clean(EXIF + FRAME + DATA + 'FFD9'), 'FFD8' + FRAME + DATA + 'FFD9');
 });
 
 test('tileSharpness is high for hard edges and low for focus blur and for motion blur', () => {

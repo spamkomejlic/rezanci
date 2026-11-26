@@ -13,6 +13,7 @@ export const TEXT = {
     'home.moderator': 'I am a moderator',
     'home.code': 'Running code:',
     'home.install': 'Add the app to the home screen',
+    'help.link': 'Help',
 
     'scan.join': 'Scan the code',
     'scan.bag': 'Scan a bag label',
@@ -216,6 +217,7 @@ export const TEXT = {
     'home.moderator': 'Ja sam moderator',
     'home.code': 'Verzija koda:',
     'home.install': 'Dodaj aplikaciju na početni ekran',
+    'help.link': 'Pomoć',
 
     'scan.join': 'Skeniraj kod',
     'scan.bag': 'Skeniraj oznaku vreće',

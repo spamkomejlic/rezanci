@@ -172,8 +172,8 @@ $('approve-all').onclick = async () => {
   const r = await api('POST', '/api/mod/photo/review', { all: true, until: listed });
   if (failed(r)) return;
   changes++;
-  if (await leaveIfComplete()) return;
   await load();
+  if (complete()) return void (location.href = '/mod/');   // no photo is left with no decision: back to the bag screen
   say(status, t('photos.approveall.done', { n: r.data.reviewed }), 'good');
 };
 $('view-approve').onclick = () => decide('approved');
