@@ -18,6 +18,11 @@
 .brands ol { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: .4rem; }
 .brands ol + p { margin-top: .5rem; }
 
+/* Example pictures: what a good photo and a bad photo look like. They are drawings, the same file for each language. */
+.example, .examples img { display: block; width: 100%; height: auto; border-radius: var(--radius-s); border: 1px solid var(--line); }
+.examples { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: .75rem .6rem; }
+.examples li { display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; line-height: 1.3; color: var(--ink-2); }
+
 /* Lists of "always" and "never". */
 .marks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
 .marks li { display: flex; gap: .6rem; align-items: baseline; }

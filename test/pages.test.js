@@ -44,6 +44,8 @@ test('each text of the help pages exists in both languages, each help text is in
     const html = read(page);
     for (const m of html.matchAll(/data-t(?:-label)?="([^"]+)"/g)) used.add(m[1]);
     for (const m of html.matchAll(/data-shot="([^"]+)"/g)) shots.add(m[1]);
+    // A picture with a fixed address (the icon, the example photos) must be a file.
+    for (const m of html.matchAll(/<img[^>]*\ssrc="\/([^"]+)"/g)) assert.ok(existsSync(new URL(m[1], pub)), `${page}: no file "${m[1]}"`);
   }
   assert.ok(used.size > 100 && shots.size >= 20, 'the scan found the keys and the screenshots');
   for (const key of used) for (const language of ['en', 'sr'])

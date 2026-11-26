@@ -42,6 +42,12 @@
 .shots img { display: block; width: auto; height: auto; max-width: 16em; max-height: 100%; border-radius: 1em; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--surface); }
 .shots.three img { max-width: 12.5em; }
 
+/* Example pictures of a good photo and of bad photos. On a slide each bad example has its name at its right side. */
+.shots img.example { width: 26em; max-width: 26em; }
+.slide .examples { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.4em 1.6em; }
+.slide .examples li { flex-direction: row; align-items: center; gap: .8em; color: var(--ink); }
+.slide .examples img { width: 7em; flex: none; border-radius: .6em; }
+
 /* Boxes in a row. "flow" has an arrow between the boxes. */
 .tiles, .flow, .steps { margin: 0; padding: 0; list-style: none; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 1.2em; }
 .tile, .flow li, .steps li { display: flex; flex-direction: column; gap: .5em; padding: 1.1em 1.2em; border-radius: 1.2em; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
