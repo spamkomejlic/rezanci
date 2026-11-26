@@ -242,7 +242,7 @@ export const TEXT = {
     'cap.allsent': 'Sve fotografije sa ovog telefona su u arhivi.',
     'cap.retry': 'Nije poslato: {why} Fotografije ostaju na telefonu. Telefon pokušava ponovo.',
     'cap.refused': 'Server je odbio fotografija: {n}. {why} Javi moderatoru.',
-    'cap.held': 'Na ovom telefonu ima fotografija iz vreće {bag} koje nisu u arhivi: {n}. Zamoli moderatora da otvori vreću {bag}, pa skeniraj njen kod ovim telefonom. Ne briši podatke pregledača.',
+    'cap.held': 'Na ovom telefonu ima fotografija iz vreće {bag} koje nisu u arhivi: {n}. Zamoli moderatora da otvori vreću {bag}, pa skeniraj njen kod ovim telefonom. Ne briši podatke pretraživača.',
     'cap.saved': 'Sačuvano na telefonu: {mp} MP, {mb} MB.',
     'cap.notjpeg': 'Ovo nije JPEG fotografija. Snimi ponovo.',
     'cap.partial': 'Datoteka fotografije nije cela. Snimi ponovo.',

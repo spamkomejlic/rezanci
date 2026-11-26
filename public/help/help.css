@@ -10,6 +10,14 @@
 /* Screenshot of the app. */
 .shot { display: block; width: 100%; height: auto; border-radius: var(--radius-s); border: 1px solid var(--line); background: var(--bg-2); }
 
+/* Steps per phone brand: one part that opens for each brand. */
+.guide h3 { margin: .25rem 0 0; font-size: 1rem; }
+.brands details { border-top: 1px solid var(--line); }
+.brands details:last-child { border-bottom: 1px solid var(--line); }
+.brands details[open] { padding-bottom: .75rem; }
+.brands ol { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: .4rem; }
+.brands ol + p { margin-top: .5rem; }
+
 /* Lists of "always" and "never". */
 .marks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
 .marks li { display: flex; gap: .6rem; align-items: baseline; }
